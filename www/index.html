@@ -1,0 +1,481 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+  <meta name="theme-color" content="#070b14" />
+  <title>Robot 2027 • V1.4 Pro Update 9</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <!-- THANH HEADER DUY NHẤT 52PX -->
+  <header id="app-header" class="top-header">
+    <div class="header-left">
+      <button id="member-badge" class="pill pill-member" title="Chuyển thành viên gia đình">
+        <span id="hdr-member-avatar">🧒</span>
+        <span id="hdr-member-name">Bé Yêu</span>
+        <span class="star-chip">★ <strong id="hdr-stars">0</strong></span>
+      </button>
+
+      <div id="hdr-ble-pill" class="pill pill-ble offline" title="Quản lý Bluetooth">
+        <span class="dot"></span>
+        <span id="hdr-ble-text">BT: Chờ</span>
+      </div>
+
+      <div id="hdr-hw-pill" class="pill pill-hw" title="Pin & Nhiệt độ">
+        <span id="hdr-battery">🔋 100%</span>
+        <span>•</span>
+        <span id="hdr-temp">36.5°C</span>
+      </div>
+
+      <div id="hdr-voice-pill" class="pill pill-voice listening" title="Trạng thái lắng nghe">
+        <span id="hdr-voice-icon">🎙️</span>
+        <span id="hdr-voice-text">Sẵn sàng</span>
+      </div>
+    </div>
+
+    <nav class="header-right" aria-label="Điều hướng chính">
+      <button id="btn-refresh-frame" class="nav-btn nav-refresh hidden" title="Tải lại trang" aria-label="Làm mới">🔄</button>
+
+      <button class="nav-btn" data-tab="topics" title="Sổ học chủ đề" aria-label="Sổ học">📖</button>
+      <button class="nav-btn active" data-tab="robot" title="Khuôn mặt Robot & Học tập" aria-label="Robot">🤖</button>
+      <button class="nav-btn" data-tab="youtube" title="YouTube Giải trí" aria-label="YouTube">▶️</button>
+      <button class="nav-btn" data-tab="game" title="Trò chơi Tích điểm" aria-label="Game">🎮</button>
+      <button class="nav-btn" data-tab="settings" title="Cài đặt Phụ huynh" aria-label="Cài đặt">⚙️</button>
+      <button class="nav-btn" data-tab="guide" title="Hướng dẫn sử dụng" aria-label="Hướng dẫn">❗</button>
+    </nav>
+  </header>
+
+  <!-- KHU VỰC NỘI DUNG CHÍNH -->
+  <main id="app-main" class="main-stage">
+
+    <!-- ================= TAB 1: ROBOT & KARAOKE ================= -->
+    <section id="tab-robot" class="tab-view active">
+      <div id="robot-stage" class="robot-stage full-face">
+        <div id="robot-face-wrap" class="robot-face-wrap">
+          <div id="robot-head" class="robot-head mood-happy">
+            <div class="antenna-bar">
+              <span id="head-led-indicator" class="led-node">💡 Đèn đầu: Tắt</span>
+              <span id="arm-led-indicator" class="led-node">🦾 Đèn tay: Tắt</span>
+            </div>
+
+            <div class="eyes-row">
+              <div class="eye left-eye">
+                <div class="pupil"></div>
+                <div class="eyelid"></div>
+              </div>
+              <div class="eye right-eye">
+                <div class="pupil"></div>
+                <div class="eyelid"></div>
+              </div>
+            </div>
+
+            <div class="cheeks-row">
+              <span class="cheek"></span>
+              <span class="cheek"></span>
+            </div>
+
+            <div class="mouth-wrap">
+              <div id="robot-mouth" class="mouth"></div>
+            </div>
+
+            <div id="sleep-zzz" class="sleep-zzz hidden">Z z z ...</div>
+          </div>
+
+          <div class="speech-box">
+            <div class="speech-meta">
+              <span id="role-badge" class="role-tag">🎓 Cô giáo tiếng Anh</span>
+              <span id="sleep-countdown-badge" class="timer-tag">Sẵn sàng</span>
+            </div>
+            <p id="robot-bubble" class="robot-bubble">Xin chào! Gọi "Hello", "Lucky" hoặc "Hello Lucky" để trò chuyện cùng mình nhé!</p>
+            <p id="user-heard-line" class="user-heard">👂 Đang lắng nghe...</p>
+          </div>
+
+          <div class="face-quick-actions">
+            <button id="btn-toggle-karaoke" class="chip-btn">📖 Mở bảng luyện đọc</button>
+            <button id="btn-quick-talk" class="chip-btn primary">🎙️ Nói chuyện ngay</button>
+          </div>
+        </div>
+
+        <aside id="karaoke-panel" class="karaoke-panel hidden">
+          <div class="karaoke-top">
+            <div>
+              <span id="k-topic-title" class="k-topic">Chủ đề: Giao tiếp hằng ngày</span>
+              <span id="k-progress-text" class="k-count">Câu 1 / 1</span>
+            </div>
+            <button id="btn-close-karaoke" class="icon-mini" title="Thu gọn bảng học">✖</button>
+          </div>
+
+          <div id="k-sentence-en" class="k-sentence-en">Hello! How are you today?</div>
+          <div id="k-spelling-box" class="k-spelling-box"></div>
+          <div id="k-sentence-vi" class="k-sentence-vi">Xin chào! Hôm nay bạn khỏe không?</div>
+
+          <div class="k-score-bar">
+            <span id="k-score-label">Điểm phát âm: Chưa đọc</span>
+            <span id="k-heard-words" class="k-heard-words"></span>
+          </div>
+
+          <div class="k-controls">
+            <button id="btn-k-prev" class="ctrl-btn">⏮️ Trước</button>
+            <button id="btn-k-listen" class="ctrl-btn info">🔊 Nghe mẫu</button>
+            <button id="btn-k-record" class="ctrl-btn success">🎤 Bé đọc</button>
+            <button id="btn-k-replay" class="ctrl-btn">🎧 Nghe lại</button>
+            <button id="btn-k-next" class="ctrl-btn primary">⏭️ Tiếp</button>
+          </div>
+        </aside>
+      </div>
+    </section>
+
+    <!-- ================= TAB 2: SỔ HỌC CHỦ ĐỀ ĐỘNG ================= -->
+    <section id="tab-topics" class="tab-view">
+      <div class="panel-header">
+        <div>
+          <h2>📖 Kho Chủ Đề Học Tiếng Anh Từ Máy Chủ</h2>
+          <p id="topics-summary-text" class="sub-text">Đang đồng bộ danh sách chủ đề từ máy chủ...</p>
+        </div>
+        <div class="panel-actions">
+          <button id="btn-review-hard-words" class="action-btn warn">🔥 Ôn từ khó của <span id="hard-member-name">Bé</span></button>
+          <button id="btn-sync-topics" class="action-btn primary">🔄 Đồng bộ chủ đề mới</button>
+        </div>
+      </div>
+
+      <div class="topics-toolbar">
+        <input id="topic-search-input" type="text" placeholder="🔍 Tìm nhanh chủ đề (VD: family, daily, school, animals...)" style="max-width:360px;" />
+        <select id="lesson-order-mode" style="max-width:210px;">
+          <option value="sequential">📋 Học theo thứ tự</option>
+          <option value="random">🎲 Học ngẫu nhiên</option>
+        </select>
+      </div>
+
+      <div id="topics-grid" class="topics-grid"></div>
+    </section>
+
+    <!-- ================= TAB 3: YOUTUBE ================= -->
+    <section id="tab-youtube" class="tab-view iframe-view">
+      <iframe
+        id="frame-youtube"
+        title="YouTube Robot"
+        src="about:blank"
+        allow="autoplay; fullscreen; encrypted-media; microphone"
+        allowfullscreen
+      ></iframe>
+    </section>
+
+    <!-- ================= TAB 4: GAME ================= -->
+    <section id="tab-game" class="tab-view iframe-view">
+      <iframe
+        id="frame-game"
+        title="Game Robot"
+        src="about:blank"
+        allow="autoplay; fullscreen; encrypted-media; microphone"
+        allowfullscreen
+      ></iframe>
+    </section>
+
+    <!-- ================= TAB 5: CÀI ĐẶT ================= -->
+    <section id="tab-settings" class="tab-view">
+      <div class="panel-header">
+        <div>
+          <h2>⚙️ Cài Đặt Hệ Thống & Phụ Huynh</h2>
+          <p class="sub-text">Quản lý thành viên, Wi-Fi, Bluetooth, Camera giám sát P2P và chế độ Ghim ứng dụng.</p>
+        </div>
+        <button id="btn-lock-settings" class="action-btn">🔒 Khóa Cài Đặt</button>
+      </div>
+
+      <div class="settings-grid">
+        <!-- Card 1: Thành viên gia đình -->
+        <div class="set-card">
+          <h3>👨‍👩‍👧‍👦 Thành Viên Gia Đình & Điểm Sao (★)</h3>
+          <div id="members-list" class="members-list"></div>
+          <div class="form-row">
+            <input id="new-member-name" type="text" placeholder="Tên thành viên (VD: Bé Bông)" />
+            <input id="new-member-age" type="number" min="2" max="99" value="7" style="max-width:74px;" />
+            <select id="new-member-avatar" style="max-width:70px;">
+              <option value="🧒">🧒</option>
+              <option value="👧">👧</option>
+              <option value="👦">👦</option>
+              <option value="👩">👩</option>
+              <option value="👨">👨</option>
+              <option value="👵">👵</option>
+            </select>
+            <button id="btn-add-member" class="action-btn primary">+ Thêm</button>
+          </div>
+        </div>
+
+        <!-- Card 2: Kiểm soát Phụ huynh -->
+        <div class="set-card">
+          <h3>🛡️ Kiểm Soát Phụ Huynh</h3>
+          <label class="toggle-row">
+            <span>Chế độ Chỉ Học Tập (Khóa YouTube & Game)</span>
+            <input id="set-study-only" type="checkbox" />
+          </label>
+          <div class="form-row">
+            <label style="white-space:nowrap;">Giờ nhắc đi ngủ:</label>
+            <input id="set-bedtime" type="time" value="21:30" />
+          </div>
+          <div class="form-row">
+            <input id="set-new-parent-pin" type="password" readonly inputmode="none" maxlength="12" placeholder="Chạm đổi PIN Phụ huynh..." />
+            <button id="btn-save-parent-pin" class="action-btn">Đổi PIN</button>
+          </div>
+        </div>
+
+        <!-- Card 3: Phần cứng, Âm thanh, Màn hình & Wi-Fi -->
+        <div class="set-card">
+          <h3>🎛️ Màn Hình, Âm Thanh & Wi-Fi</h3>
+          <div class="slider-row">
+            <span>Độ sáng: <strong id="val-brightness">75%</strong></span>
+            <input id="set-brightness" type="range" min="10" max="100" value="75" />
+          </div>
+          <div class="slider-row">
+            <span>Âm lượng: <strong id="val-volume">80%</strong></span>
+            <input id="set-volume" type="range" min="0" max="100" value="80" />
+          </div>
+          <div class="slider-row">
+            <span>Tốc độ đọc: <strong id="val-rate">0.95x</strong></span>
+            <input id="set-rate" type="range" min="0.6" max="1.3" step="0.05" value="0.95" />
+          </div>
+          <div class="btn-group-wrap">
+            <button id="btn-req-perms" class="action-btn">🔑 Cấp quyền thiết bị</button>
+            <button id="btn-open-wifi" class="action-btn primary">📶 Quét & Cài đặt Wi-Fi (<span id="set-wifi-info">Đang kiểm tra</span>)</button>
+          </div>
+        </div>
+
+        <!-- Card 4: Kết nối Bluetooth (ESP32, Loa, Điện thoại) -->
+        <div class="set-card">
+          <h3>📡 Kết Nối Bluetooth (ESP32 & Thiết Bị Ngoài)</h3>
+          <p id="ble-status-detail" class="sub-text">Trạng thái: Chưa kết nối thiết bị Bluetooth</p>
+          <div class="btn-group-wrap">
+            <button id="btn-ble-scan" class="action-btn primary">🔍 Quét & Kết nối Bluetooth</button>
+            <button id="btn-test-head-light" class="action-btn">💡 Đèn đầu</button>
+            <button id="btn-test-arm-light" class="action-btn">🦾 Đèn tay</button>
+            <button id="btn-test-head-turn" class="action-btn">🔄 Xoay đầu</button>
+          </div>
+        </div>
+
+        <!-- Card 5: Camera giám sát từ xa QR P2P (Đã ẩn ô input đường dẫn Server) -->
+        <div class="set-card">
+          <h3>📷 Camera Giám Sát Từ Xa (QR P2P 24/7)</h3>
+          <div class="qr-camera-box">
+            <div id="camera-qr-code" class="qr-render-slot"></div>
+            <div class="qr-link-col">
+              <span class="sub-text">Quét mã QR hoặc mở link trên điện thoại khác để xem trực tiếp:</span>
+              <div class="form-row">
+                <input id="camera-live-url-input" type="text" readonly />
+                <button id="btn-copy-cam-url" type="button" class="action-btn">Copy</button>
+              </div>
+              <span id="cam-signaling-status" class="sub-text">🟢 Sẵn sàng nhận cuộc gọi từ xa</span>
+            </div>
+          </div>
+
+          <!-- Ẩn ô input đường dẫn server theo yêu cầu -->
+          <div class="hidden" aria-hidden="true">
+            <input id="set-base-url" type="url" value="https://khotrithucso.io.vn/robot2027_2_4/test1" />
+            <button id="btn-save-server" type="button">Lưu Server</button>
+          </div>
+
+          <div class="btn-group-wrap">
+            <button id="btn-toggle-cam-preview" class="action-btn">📷 Thử Camera trước (Tắt mặc định)</button>
+          </div>
+          <video id="cam-preview-video" class="cam-preview hidden" autoplay playsinline muted></video>
+        </div>
+
+        <!-- Card 6: QUYỀN GHIM ỨNG DỤNG & NHÀ PHÁT TRIỂN (Không gợi ý mật khẩu trong placeholder) -->
+        <div class="set-card dev-danger-card">
+          <h3>📌 Quyền Ghim Ứng Dụng (Kiosk) & Nhà Phát Triển</h3>
+          <p class="sub-text">Bật ghim để khóa ứng dụng trên màn hình. Chạm ô bên dưới để nhập mã nhà phát triển bằng bàn phím ảo.</p>
+          <div class="btn-group-wrap">
+            <button id="btn-dev-lock" type="button" class="action-btn primary">📌 Bật Ghim Ứng Dụng</button>
+            <button id="btn-check-pin-status" type="button" class="action-btn">🔍 Kiểm tra trạng thái ghim</button>
+          </div>
+          <div class="form-row" style="margin-top:4px;">
+            <input id="dev-exit-code-input" type="password" readonly inputmode="none" placeholder="Nhập mã nhà phát triển..." />
+            <button id="btn-dev-unlock" type="button" class="action-btn danger">🔓 Gỡ Ghim Thoát App</button>
+          </div>
+          <p id="dev-lock-state" class="sub-text">Trạng thái Kiosk: <strong style="color:#22c55e;">ĐANG MỞ (KHÔNG GHIM)</strong></p>
+        </div>
+      </div>
+    </section>
+
+    <!-- ================= TAB 6: HƯỚNG DẪN SỬ DỤNG ================= -->
+    <section id="tab-guide" class="tab-view">
+      <div class="panel-header">
+        <div>
+          <h2>❗ Hướng Dẫn Sử Dụng Robot 2027 V1.4 Pro</h2>
+          <p class="sub-text">Tất cả cơ chế hoạt động, quy tắc ngủ tiết kiệm pin, tích sao và danh sách đầy đủ câu lệnh giọng nói thông minh.</p>
+        </div>
+      </div>
+
+      <div class="guide-grid">
+        <div class="guide-card">
+          <h3>1. Đánh Thức & Chu Trình Ngủ Tiết Kiệm Pin</h3>
+          <ul>
+            <li><strong>Luôn lắng nghe:</strong> Micro hoạt động nền liên tục (không tiếng bíp) ở màn hình Robot.</li>
+            <li><strong>3 Từ khóa đánh thức:</strong> Gọi <strong>"Hello"</strong>, <strong>"Lucky"</strong>, hoặc <strong>"Hello Lucky"</strong> (hoặc chạm màn hình / chạm cảm biến ESP32) để đánh thức Robot.</li>
+            <li><strong>Tự động tiết kiệm pin:</strong> Khi không tương tác ở màn hình chính, Robot sẽ chuyển sang trạng thái nghỉ tiết kiệm pin và tự bật sáng ngay khi có người gọi.</li>
+          </ul>
+        </div>
+
+        <div class="guide-card">
+          <h3>2. Lệnh Giọng Nói "Tôi muốn..." — Học Tập & Điều Hướng</h3>
+          <ul>
+            <li><strong>"Tôi muốn học"</strong> / <strong>"Tôi muốn học chủ đề [số hoặc tên]"</strong>: Mở đúng chủ đề và bắt đầu luyện đọc.</li>
+            <li><strong>"Tôi muốn học ngẫu nhiên"</strong>: Bốc ngẫu nhiên câu tiếng Anh để ôn luyện nhanh.</li>
+            <li><strong>"Tôi muốn ôn từ khó"</strong>: Mở danh sách các từ từng phát âm sai để luyện lại.</li>
+            <li><strong>"Dịch câu này"</strong> / <strong>"Đánh vần từ [tên từ]"</strong>: Đọc nghĩa tiếng Việt và đánh vần từng chữ cái.</li>
+            <li><strong>"Tôi muốn xem YouTube"</strong> / <strong>"Tôi muốn chơi game"</strong>: Chuyển tab tức thì.</li>
+          </ul>
+        </div>
+
+        <div class="guide-card">
+          <h3>3. Lệnh Giọng Nói "Tôi muốn..." — Đèn, Xoay Đầu & Thiết Bị</h3>
+          <ul>
+            <li><strong>Đèn đầu & Đèn tay (ESP32):</strong> <em>"Mở đèn đầu"</em>, <em>"tắt đèn đầu"</em>, <em>"mở đèn tay"</em>, <em>"tắt đèn tay"</em>, <em>"bật đèn ngủ"</em>, <em>"tắt hết đèn"</em>.</li>
+            <li><strong>Xoay đầu đa hướng (ESP32):</strong> <em>"Xoay đầu trái"</em>, <em>"xoay đầu phải"</em>, <em>"ngẩng đầu lên"</em>, <em>"cúi đầu xuống"</em>, <em>"xoay đầu 3 lần"</em>, <em>"gật đầu"</em>.</li>
+            <li><strong>Màn hình & Âm lượng:</strong> <em>"Tăng sáng"</em>, <em>"giảm sáng"</em>, <em>"tăng âm lượng"</em>, <em>"giảm âm lượng"</em>.</li>
+          </ul>
+        </div>
+
+        <div class="guide-card">
+          <h3>4. Gia Đình, Tích Điểm Sao (★) & Giám Sát Từ Xa</h3>
+          <ul>
+            <li><strong>Chuyển thành viên bằng giọng nói:</strong> Nói <em>"Tôi là [Tên]"</em> hoặc chạm vào huy hiệu tên trên góc trái.</li>
+            <li><strong>Kiếm & Dùng Sao (★):</strong> Đọc tiếng Anh đạt từ <strong>80%</strong> trở lên nhận <strong>+1 ★</strong> và tự đồng bộ với YouTube / Trò chơi.</li>
+            <li><strong>Camera QR P2P:</strong> Quét mã QR trong Cài đặt 1 lần duy nhất để theo dõi từ xa trên điện thoại khác.</li>
+          </ul>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <!-- MODAL MỞ KHÓA CÀI ĐẶT -->
+  <div id="pin-modal" class="modal-backdrop hidden">
+    <div class="modal-card" style="max-width:410px;">
+      <div class="modal-header-row">
+        <h3>🔒 Mở Khóa Cài Đặt</h3>
+        <button id="btn-pin-cancel" type="button" class="icon-mini">✖</button>
+      </div>
+      <p class="sub-text">Nhập mã PIN Phụ huynh để truy cập cài đặt hệ thống</p>
+      <div class="pin-input-row">
+        <input id="pin-modal-input" class="pin-entry-input" type="password" readonly inputmode="none" maxlength="20" placeholder="Nhập mã..." />
+        <button id="btn-pin-toggle-eye" type="button" class="action-btn" title="Hiện/Ẩn mã">👁️</button>
+      </div>
+      <div id="pin-numpad" class="pin-numpad">
+        <button type="button" class="numpad-btn" data-key="1">1</button>
+        <button type="button" class="numpad-btn" data-key="2">2</button>
+        <button type="button" class="numpad-btn" data-key="3">3</button>
+        <button type="button" class="numpad-btn" data-key="4">4</button>
+        <button type="button" class="numpad-btn" data-key="5">5</button>
+        <button type="button" class="numpad-btn" data-key="6">6</button>
+        <button type="button" class="numpad-btn" data-key="7">7</button>
+        <button type="button" class="numpad-btn" data-key="8">8</button>
+        <button type="button" class="numpad-btn" data-key="9">9</button>
+        <button type="button" class="numpad-btn warn" data-key="CLR">Xóa hết</button>
+        <button type="button" class="numpad-btn" data-key="0">0</button>
+        <button type="button" class="numpad-btn" data-key="DEL">⌫</button>
+      </div>
+      <p id="pin-modal-error" class="error-text hidden">Mã PIN không đúng, vui lòng thử lại!</p>
+      <div class="modal-actions">
+        <button id="btn-pin-confirm" type="button" class="action-btn primary" style="width:100%;">Mở khóa Cài đặt</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- MODAL QUẢN LÝ WI-FI (QUÉT DANH SÁCH + CHỌN + PHÍM ẢO NHẬP PASS) -->
+  <div id="wifi-modal" class="modal-backdrop hidden">
+    <div class="modal-card" style="max-width:540px;">
+      <div class="modal-header-row">
+        <h3>📶 Cài Đặt Mạng Wi-Fi</h3>
+        <div style="display:flex; gap:6px;">
+          <button id="btn-wifi-rescan" type="button" class="action-btn primary">🔄 Quét Wi-Fi</button>
+          <button id="btn-wifi-close" type="button" class="icon-mini">✖</button>
+        </div>
+      </div>
+
+      <p id="wifi-modal-current" class="sub-text">Mạng hiện tại: Đang kiểm tra...</p>
+
+      <!-- Danh sách Wi-Fi quét được -->
+      <div id="wifi-scan-list" class="scan-list-box">
+        <div class="sub-text" style="padding:14px; text-align:center;">Đang quét danh sách Wi-Fi xung quanh...</div>
+      </div>
+
+      <div class="form-row">
+        <input id="wifi-ssid-input" type="text" placeholder="Tên Wi-Fi (SSID) đã chọn..." />
+      </div>
+      <div class="form-row">
+        <input id="wifi-pass-input" type="password" readonly inputmode="none" placeholder="Chạm nhập mật khẩu Wi-Fi bằng bàn phím ảo..." />
+        <button id="btn-wifi-toggle-eye" type="button" class="action-btn" title="Hiện/Ẩn mật khẩu">👁️</button>
+      </div>
+
+      <p id="wifi-connect-feedback" class="sub-text hidden"></p>
+
+      <div class="modal-actions">
+        <button id="btn-wifi-android-panel" type="button" class="action-btn">Bảng Wi-Fi Android</button>
+        <button id="btn-wifi-connect" type="button" class="action-btn success">📶 Kết nối ngay</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- MODAL QUẢN LÝ BLUETOOTH (QUÉT CẢ BLE + CLASSIC: ĐIỆN THOẠI, LOA, ESP32) -->
+  <div id="ble-modal" class="modal-backdrop hidden">
+    <div class="modal-card" style="max-width:540px;">
+      <div class="modal-header-row">
+        <h3>📡 Quản Lý Thiết Bị Bluetooth</h3>
+        <div style="display:flex; gap:6px;">
+          <button id="btn-ble-modal-scan" type="button" class="action-btn primary">🔍 Quét thiết bị</button>
+          <button id="btn-ble-close" type="button" class="icon-mini">✖</button>
+        </div>
+      </div>
+
+      <p id="ble-modal-status" class="sub-text">Trạng thái: Chưa kết nối</p>
+
+      <!-- Danh sách thiết bị Bluetooth tìm thấy -->
+      <div id="ble-device-list" class="scan-list-box">
+        <div class="sub-text" style="padding:14px; text-align:center;">Bấm "Quét thiết bị" để tìm ESP32, loa Bluetooth hoặc điện thoại gần đây.</div>
+      </div>
+
+      <div class="form-row">
+        <input id="ble-pin-input" type="password" readonly inputmode="none" placeholder="Mật khẩu / PIN ghép đôi (nếu có)..." />
+        <button id="btn-ble-connect-selected" type="button" class="action-btn success">🔗 Kết nối</button>
+      </div>
+
+      <div class="modal-header-row" style="margin-top:2px;">
+        <label class="toggle-row" style="font-size:12px;">
+          <input id="ble-auto-reconnect" type="checkbox" checked />
+          <span>Tự động kết nối lại khi mở App</span>
+        </label>
+        <button id="btn-ble-forget" type="button" class="action-btn danger">Ngắt / Quên</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- MODAL BÀN PHÍM ẢO DÙNG CHUNG (NUMPAD & QWERTY) -->
+  <div id="virtual-kb-modal" class="modal-backdrop vkb-backdrop hidden">
+    <div class="modal-card vkb-card">
+      <div class="modal-header-row">
+        <span id="vkb-title" class="sub-text" style="font-weight:700; color:#7dd3fc;">⌨️ Bàn phím ảo</span>
+        <div style="display:flex; gap:6px;">
+          <button id="vkb-switch-layout" type="button" class="action-btn">123 / ABC</button>
+          <button id="vkb-toggle-eye" type="button" class="action-btn">👁️</button>
+          <button id="vkb-close" type="button" class="icon-mini">✖</button>
+        </div>
+      </div>
+      <input id="vkb-preview-input" type="password" readonly style="font-size:16px; font-weight:700; letter-spacing:1px;" />
+      <div id="vkb-keys-container" class="vkb-keys-wrap"></div>
+    </div>
+  </div>
+
+  <!-- MODAL CHUYỂN NHANH THÀNH VIÊN -->
+  <div id="member-modal" class="modal-backdrop hidden">
+    <div class="modal-card" style="max-width:440px;">
+      <div class="modal-header-row">
+        <h3>👨‍👩‍👧‍👦 Chọn Thành Viên Đang Tương Tác</h3>
+        <button id="btn-member-close" type="button" class="icon-mini">✖</button>
+      </div>
+      <div id="quick-member-grid" class="quick-member-grid"></div>
+    </div>
+  </div>
+
+  <script src="qrcode.min.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
