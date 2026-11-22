@@ -30,7 +30,6 @@ import android.net.LinkProperties;
 import android.net.Network;
 import android.net.NetworkCapabilities;
 import android.net.NetworkRequest;
-import android.net.wifi.ScanResult;
 import android.net.wifi.WifiConfiguration;
 import android.net.wifi.WifiInfo;
 import android.net.wifi.WifiManager;
@@ -824,28 +823,28 @@ public class RobotNativePlugin extends Plugin {
             }
         } catch (Exception ignored) {}
 
-        List<ScanResult> results = new ArrayList<>();
+        List<android.net.wifi.ScanResult> results = new ArrayList<>();
         try {
-            List<ScanResult> raw = wifiManager.getScanResults();
+            List<android.net.wifi.ScanResult> raw = wifiManager.getScanResults();
             if (raw != null) results.addAll(raw);
         } catch (Exception ignored) {}
 
         // Deduplicate by SSID keeping highest signal level
-        Map<String, ScanResult> bestBySsid = new HashMap<>();
-        for (ScanResult sr : results) {
+        Map<String, android.net.wifi.ScanResult> bestBySsid = new HashMap<>();
+        for (android.net.wifi.ScanResult sr : results) {
             String ssid = (sr.SSID != null) ? sr.SSID.trim() : "";
             if (ssid.isEmpty()) continue;
-            ScanResult prev = bestBySsid.get(ssid);
+            android.net.wifi.ScanResult prev = bestBySsid.get(ssid);
             if (prev == null || sr.level > prev.level) {
                 bestBySsid.put(ssid, sr);
             }
         }
 
-        List<ScanResult> uniqueList = new ArrayList<>(bestBySsid.values());
+        List<android.net.wifi.ScanResult> uniqueList = new ArrayList<>(bestBySsid.values());
         Collections.sort(uniqueList, (a, b) -> Integer.compare(b.level, a.level));
 
         JSArray networks = new JSArray();
-        for (ScanResult sr : uniqueList) {
+        for (android.net.wifi.ScanResult sr : uniqueList) {
             String ssid = sr.SSID.trim();
             String caps = sr.capabilities != null ? sr.capabilities : "";
             boolean secured = caps.contains("WPA") || caps.contains("WEP") || caps.contains("SAE") || caps.contains("EAP");
