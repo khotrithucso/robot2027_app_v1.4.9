@@ -1172,7 +1172,7 @@
     }
   }
 
-  async function verifyWifiConnectionOnce(targetSsid) {
+    async function verifyWifiConnectionOnce(targetSsid) {
     const native = getRobotNative();
     const fb = document.getElementById("wifi-connect-feedback");
     if (!native || typeof native.getDeviceStatus !== "function") return false;
@@ -1182,15 +1182,19 @@
       const curSsid = cleanSsidName(st?.wifiSsid);
       const localIp = (st?.localIp || "").trim();
 
-      const ssidMatched = targetSsid
-        ? curSsid.toLowerCase() === targetSsid.toLowerCase()
-        : (curSsid && !curSsid.toLowerCase().includes("unknown") && !curSsid.toLowerCase().includes("chưa"));
+      const isMaskedConnected = curSsid === "Đã kết nối Wi-Fi";
+      const ssidMatched = isMaskedConnected
+        ? true
+        : (targetSsid
+            ? curSsid.toLowerCase() === targetSsid.toLowerCase()
+            : (curSsid && !curSsid.toLowerCase().includes("unknown") && !curSsid.toLowerCase().includes("chưa")));
 
       if (ssidMatched && isLocalWifiIp(localIp)) {
         stopWifiVerifyPolling();
         state.isConfiguringWifi = false;
+        const displaySsid = isMaskedConnected && targetSsid ? targetSsid : curSsid;
         if (fb) {
-          fb.textContent = `✅ Đã kết nối thành công Wi-Fi "${curSsid}" (IP: ${localIp})`;
+          fb.textContent = `✅ Đã kết nối thành công Wi-Fi "${displaySsid}" (IP: ${localIp})`;
           fb.className = "sub-text";
           fb.style.color = "#4ade80";
           fb.classList.remove("hidden");
@@ -1202,6 +1206,7 @@
     } catch (_) {}
     return false;
   }
+
 
   async function connectSelectedWifi() {
     const ssid = (document.getElementById("wifi-ssid-input")?.value || "").trim();
