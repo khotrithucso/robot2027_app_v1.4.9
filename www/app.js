@@ -1,11 +1,12 @@
 /* ==========================================================================
-   ROBOT 2027 - V1.4 PRO (UPDATE 10)
+   ROBOT 2027 - V1.4 PRO (UPDATE 12)
+   - Hands-Free & Button-Triggered English Pronunciation Grading + Auto-Advance
+   - 100% In-App Wi-Fi Suggestion Connect + Real Local IP Verification
    - Dual-Mode Bluetooth Scanner & Connector (BLE + Classic: ESP32, Speakers, Phones)
-   - Wi-Fi Scanner List + Virtual Keyboard Password + Native Android Connect
    - Full Server Sync for All Topics & Lessons (api.php + Native HTTP fallback)
    - Configurable Pronunciation Pass Threshold (50% - 100%)
    - Instant Voice Command Execution via speechPartial + Safe WebRTC P2P Camera
-   - Single Official Developer Password: 202799 (No placeholder hint)
+   - Single Official Developer Password: 202799
    ========================================================================== */
 (function () {
   "use strict";
@@ -35,9 +36,11 @@
     selectedBtAddress: "",
     wifiScannedList: [],
     selectedWifiSsid: "",
+    isConfiguringWifi: false,
     isSpeaking: false,
     isListening: false,
     isRecordingLesson: false,
+    recordStartedAt: 0,
     listenSessionId: 0,
     idleSeconds: 0,
     sleepStage: "awake",
@@ -130,7 +133,6 @@
       }
     } catch (_) {}
 
-    // Fallback: Native Android HttpURLConnection (bypasses any WebView CORS/SSL issues)
     const native = getRobotNative();
     if (native && typeof native.httpGet === "function") {
       const nativeRes = await native.httpGet({ url });
@@ -148,6 +150,37 @@
       .replace(/[\u0300-\u036f]/g, "")
       .replace(/đ/g, "d")
       .trim();
+  }
+
+  function normalizeEnglishWords(str) {
+    let s = (str || "").toLowerCase();
+    const contractions = {
+      "i'm": "i am",
+      "you're": "you are",
+      "he's": "he is",
+      "she's": "she is",
+      "it's": "it is",
+      "we're": "we are",
+      "they're": "they are",
+      "what's": "what is",
+      "where's": "where is",
+      "who's": "who is",
+      "how's": "how is",
+      "that's": "that is",
+      "there's": "there is",
+      "don't": "do not",
+      "doesn't": "does not",
+      "didn't": "did not",
+      "can't": "cannot",
+      "won't": "will not",
+      "isn't": "is not",
+      "aren't": "are not",
+      "let's": "let us"
+    };
+    Object.entries(contractions).forEach(([k, v]) => {
+      s = s.replace(new RegExp(`\\b${k}\\b`, "g"), v);
+    });
+    return s.replace(/[^a-z0-9\s]/g, " ").split(/\s+/).filter(Boolean);
   }
 
   function buildLocalSpelling(sentence) {
@@ -399,7 +432,7 @@
 
   function startIdleMonitor() {
     setInterval(() => {
-      if (state.activeTab !== "robot" || state.isSpeaking || state.isRecordingLesson || state.karaokeOpen) {
+      if (state.activeTab !== "robot" || state.isSpeaking || state.isRecordingLesson || state.karaokeOpen || state.isConfiguringWifi) {
         state.idleSeconds = 0;
         updateSleepBadge();
         return;
@@ -451,7 +484,17 @@
     }
   }
 
-  function speakFeedback(text, lang = "vi-VN") {
+  function onSamplePlaybackFinished() {
+    state.isSpeaking = false;
+    setRobotMood("happy");
+    if (state.karaokeOpen) {
+      const scoreEl = document.getElementById("k-score-label");
+      if (scoreEl) scoreEl.textContent = "🎙️ Tới lượt bạn đọc câu tiếng Anh...";
+    }
+    ensureAlwaysListening();
+  }
+
+  function speakFeedback(text, lang = "vi-VN", isSampleSentence = false) {
     setRobotBubble(text);
     state.isSpeaking = true;
     state.isListening = false;
@@ -468,9 +511,7 @@
       }).catch(() => {});
       setTimeout(() => {
         if (state.isSpeaking) {
-          state.isSpeaking = false;
-          setRobotMood("happy");
-          ensureAlwaysListening();
+          onSamplePlaybackFinished();
         }
       }, Math.min(9000, Math.max(1800, text.length * 75)));
       return;
@@ -481,19 +522,11 @@
       const u = new SpeechSynthesisUtterance(text);
       u.lang = lang;
       u.rate = lang.startsWith("en") ? state.config.speechRate : 1.0;
-      u.onend = () => {
-        state.isSpeaking = false;
-        setRobotMood("happy");
-        ensureAlwaysListening();
-      };
-      u.onerror = () => {
-        state.isSpeaking = false;
-        setRobotMood("happy");
-      };
+      u.onend = () => onSamplePlaybackFinished();
+      u.onerror = () => onSamplePlaybackFinished();
       window.speechSynthesis.speak(u);
     } else {
-      state.isSpeaking = false;
-      setRobotMood("happy");
+      onSamplePlaybackFinished();
     }
   }
 
@@ -685,12 +718,15 @@
   // ==================== KARAOKE & PRONUNCIATION ====================
   function toggleKaraokePanel(open) {
     state.karaokeOpen = open;
+    state.isRecordingLesson = false;
     const stage = document.getElementById("robot-stage");
     const panel = document.getElementById("karaoke-panel");
     stage.classList.toggle("split-mode", open);
     stage.classList.toggle("full-face", !open);
     panel.classList.toggle("hidden", !open);
-    if (open) renderCurrentSentence();
+    if (open) {
+      renderCurrentSentence();
+    }
     updateSleepBadge();
   }
 
@@ -740,18 +776,27 @@
 
     if (item.audio_url) {
       try {
+        const native = getRobotNative();
+        if (native) native.stopListening().catch(() => {});
+        state.isSpeaking = true;
+        state.isListening = false;
+        setRobotMood("speaking");
+
         state.audioPlayer.pause();
         state.audioPlayer.src = item.audio_url;
         state.audioPlayer.playbackRate = state.config.speechRate;
-        state.audioPlayer.play().catch(() => speakFeedback(item.en, "en-US"));
+        state.audioPlayer.onended = () => onSamplePlaybackFinished();
+        state.audioPlayer.onerror = () => speakFeedback(item.en, "en-US", true);
+        state.audioPlayer.play().catch(() => speakFeedback(item.en, "en-US", true));
         return;
       } catch (_) {}
     }
-    speakFeedback(item.en, "en-US");
+    speakFeedback(item.en, "en-US", true);
   }
 
   function startLessonPronunciationCheck() {
     state.isRecordingLesson = true;
+    state.recordStartedAt = Date.now();
     state.isListening = true;
     state.listenSessionId += 1;
     setRobotMood("listening");
@@ -769,18 +814,24 @@
     const item = state.sentences[state.sentenceIndex];
     if (!item) return;
 
-    const cleanTarget = item.en.toLowerCase().replace(/[^a-z0-9'\s]/g, "").split(/\s+/).filter(Boolean);
-    const cleanSpoken = (spokenText || "").toLowerCase().replace(/[^a-z0-9'\s]/g, "").split(/\s+/).filter(Boolean);
+    const cleanTarget = normalizeEnglishWords(item.en);
+    const cleanSpoken = normalizeEnglishWords(spokenText);
 
-    let matched = 0;
+    // Tô màu từng từ hiển thị trên màn hình
+    const rawTargetWords = item.en.split(/\s+/).filter(Boolean);
     const wordEls = document.querySelectorAll("#k-sentence-en .k-word");
-    cleanTarget.forEach((tw, idx) => {
-      const ok = cleanSpoken.includes(tw);
-      if (ok) matched++;
+    rawTargetWords.forEach((rawW, idx) => {
+      const normParts = normalizeEnglishWords(rawW);
+      const ok = normParts.length > 0 && normParts.every(p => cleanSpoken.includes(p));
       if (wordEls[idx]) {
         wordEls[idx].classList.remove("ok", "miss");
         wordEls[idx].classList.add(ok ? "ok" : "miss");
       }
+    });
+
+    let matched = 0;
+    cleanTarget.forEach(tw => {
+      if (cleanSpoken.includes(tw)) matched++;
     });
 
     const score = cleanTarget.length > 0 ? Math.round((matched / cleanTarget.length) * 100) : 0;
@@ -795,22 +846,26 @@
       sendBleCommand("M:HAPPY");
       speakFeedback(`Tuyệt vời! Bạn đạt ${score} điểm và nhận thêm 1 ngôi sao!`, "vi-VN");
       setTimeout(() => {
+        if (!state.karaokeOpen) return;
         if (state.sentenceIndex < state.sentences.length - 1) {
           state.sentenceIndex += 1;
           renderCurrentSentence();
+          playCurrentSample();
+        } else {
+          speakFeedback(`Chúc mừng bạn đã hoàn thành toàn bộ chủ đề ${state.currentTopicTitle}!`, "vi-VN");
         }
       }, 2800);
     } else {
-      speakFeedback(`Bạn đạt ${score} điểm (cần ${passThreshold} điểm). Cùng nghe mẫu lại rồi đọc nhé!`, "vi-VN");
+      speakFeedback(`Bạn đạt ${score} điểm (cần ${passThreshold} điểm). Hãy đọc lại câu này nhé!`, "vi-VN");
     }
   }
 
-  // ==================== VOICE COMMAND ROUTER (INSTANT PARTIAL + FINAL) ====================
+  // ==================== VOICE COMMAND ROUTER (INSTANT PARTIAL + AUTO LESSON GRADING) ====================
   let lastInstantCmdNorm = "";
   let lastInstantCmdTime = 0;
 
   function ensureAlwaysListening() {
-    if (state.isSpeaking || state.isRecordingLesson || robotPc || isAnsweringCam) return;
+    if (state.isSpeaking || state.isConfiguringWifi || robotPc || isAnsweringCam) return;
     const native = getRobotNative();
     if (native && !state.isListening) {
       state.isListening = true;
@@ -820,8 +875,42 @@
     }
   }
 
+  function isKaraokeControlCommand(norm) {
+    if (!norm) return false;
+    return (
+      norm.includes("nghe mau") ||
+      norm.includes("doc mau") ||
+      norm.includes("nghe lai") ||
+      norm.includes("cau tiep") ||
+      norm.includes("cau sau") ||
+      norm.includes("tiep theo") ||
+      norm.includes("cau truoc") ||
+      norm.includes("quay lai") ||
+      norm.includes("dich cau") ||
+      norm.includes("nghia la gi") ||
+      norm.includes("dung hoc") ||
+      norm.includes("dong bang hoc") ||
+      norm.includes("mo youtube") ||
+      norm.includes("choi game") ||
+      norm.includes("ve robot") ||
+      norm.includes("so hoc tap") ||
+      norm.includes("mo den") ||
+      norm.includes("bat den") ||
+      norm.includes("tat den") ||
+      norm.includes("xoay dau") ||
+      norm.includes("gat dau") ||
+      norm.includes("lac dau") ||
+      norm.includes("tang sang") ||
+      norm.includes("giam sang")
+    );
+  }
+
   function canTriggerInstantVoiceCommand(norm) {
     if (!norm || state.isRecordingLesson || state.isSpeaking) return false;
+    // Khi đang mở bảng học tiếng Anh, không cắt ngang khi bé đang đọc câu tiếng Anh
+    if (state.karaokeOpen && !isKaraokeControlCommand(norm)) {
+      return false;
+    }
     return (
       norm === "hello" ||
       norm === "lucky" ||
@@ -862,15 +951,18 @@
     if (!text) return;
     document.getElementById("user-heard-line").textContent = `🗣️ Bạn nói: "${text}"`;
 
-    if (state.isRecordingLesson) {
+    const norm = normalizeVietnamese(text);
+    resetIdleTimer();
+
+    // 1. Khi đang mở bài học tiếng Anh: tự động chấm điểm bất kỳ câu đọc nào không phải lệnh điều khiển
+    if (state.karaokeOpen && (state.isRecordingLesson || !isKaraokeControlCommand(norm))) {
       state.isRecordingLesson = false;
       evaluateEnglishPronunciation(text);
       return;
     }
+    state.isRecordingLesson = false;
 
-    const norm = normalizeVietnamese(text);
-    resetIdleTimer();
-
+    // 2. Xử lý các lệnh điều khiển bằng giọng nói
     if (norm === "hello" || norm === "lucky" || norm === "hello lucky") {
       wakeRobot(true);
       return;
@@ -923,11 +1015,11 @@
       }
       return;
     }
-    if (norm.includes("nghe mau") || norm.includes("doc mau")) {
+    if (norm.includes("nghe mau") || norm.includes("doc mau") || norm.includes("nghe lai")) {
       if (state.karaokeOpen) playCurrentSample();
       return;
     }
-    if (norm.includes("cau tiep") || norm.includes("cau sau")) {
+    if (norm.includes("cau tiep") || norm.includes("cau sau") || norm.includes("tiep theo")) {
       if (state.karaokeOpen && state.sentenceIndex < state.sentences.length - 1) {
         state.sentenceIndex += 1;
         renderCurrentSentence();
@@ -993,7 +1085,25 @@
     }
   }
 
-  // ==================== 1. WI-FI SCANNER & DIRECT CONNECT ====================
+  // ==================== 1. WI-FI SCANNER & 100% IN-APP VERIFIED CONNECT ====================
+  let wifiVerifyTimer = null;
+
+  function isLocalWifiIp(ip) {
+    if (!ip || ip === "0.0.0.0") return false;
+    return /^(192\.168\.|10\.|172\.(1[6-9]|2\d|3[01])\.)/.test(ip);
+  }
+
+  function cleanSsidName(raw) {
+    return (raw || "").replace(/^"+|"+$/g, "").trim();
+  }
+
+  function stopWifiVerifyPolling() {
+    if (wifiVerifyTimer) {
+      clearInterval(wifiVerifyTimer);
+      wifiVerifyTimer = null;
+    }
+  }
+
   function renderWifiList() {
     const box = document.getElementById("wifi-scan-list");
     if (!box) return;
@@ -1035,9 +1145,7 @@
 
   async function scanWifiList() {
     const box = document.getElementById("wifi-scan-list");
-    const fb = document.getElementById("wifi-connect-feedback");
-    if (fb) fb.classList.add("hidden");
-    if (box) {
+    if (box && (!state.wifiScannedList || state.wifiScannedList.length === 0)) {
       box.innerHTML = `<div class="sub-text" style="padding:14px; text-align:center;">🔄 Đang quét các mạng Wi-Fi xung quanh...</div>`;
     }
 
@@ -1050,18 +1158,49 @@
     }
 
     try {
-      await native.requestAllPermissions().catch(() => {});
       const res = await native.scanWifiNetworks();
       state.wifiScannedList = Array.isArray(res?.networks) ? res.networks : [];
-      if (res?.currentSsid && !res.currentSsid.includes("unknown")) {
-        document.getElementById("wifi-modal-current").textContent = `Mạng hiện tại: ${res.currentSsid}`;
+      const curSsid = cleanSsidName(res?.currentSsid);
+      if (curSsid && !curSsid.toLowerCase().includes("unknown")) {
+        document.getElementById("wifi-modal-current").textContent = `Mạng hiện tại: ${curSsid}`;
       }
       renderWifiList();
     } catch (err) {
       if (box) {
-        box.innerHTML = `<div class="error-text" style="padding:12px;">Lỗi quét Wi-Fi: ${err?.message || "Hãy bật Vị trí (GPS) & Wi-Fi"}</div>`;
+        box.innerHTML = `<div class="error-text" style="padding:12px;">Lỗi quét Wi-Fi: ${err?.message || "Hãy bật Vị trí (GPS) & Wi-Fi rồi bấm Cấp quyền"}</div>`;
       }
     }
+  }
+
+  async function verifyWifiConnectionOnce(targetSsid) {
+    const native = getRobotNative();
+    const fb = document.getElementById("wifi-connect-feedback");
+    if (!native || typeof native.getDeviceStatus !== "function") return false;
+
+    try {
+      const st = await native.getDeviceStatus();
+      const curSsid = cleanSsidName(st?.wifiSsid);
+      const localIp = (st?.localIp || "").trim();
+
+      const ssidMatched = targetSsid
+        ? curSsid.toLowerCase() === targetSsid.toLowerCase()
+        : (curSsid && !curSsid.toLowerCase().includes("unknown") && !curSsid.toLowerCase().includes("chưa"));
+
+      if (ssidMatched && isLocalWifiIp(localIp)) {
+        stopWifiVerifyPolling();
+        state.isConfiguringWifi = false;
+        if (fb) {
+          fb.textContent = `✅ Đã kết nối thành công Wi-Fi "${curSsid}" (IP: ${localIp})`;
+          fb.className = "sub-text";
+          fb.style.color = "#4ade80";
+          fb.classList.remove("hidden");
+        }
+        refreshDeviceTelemetry();
+        scanWifiList();
+        return true;
+      }
+    } catch (_) {}
+    return false;
   }
 
   async function connectSelectedWifi() {
@@ -1078,34 +1217,63 @@
       return;
     }
 
+    stopWifiVerifyPolling();
+    state.isConfiguringWifi = true;
+
     if (fb) {
-      fb.textContent = `⏳ Đang kết nối tới "${ssid}"... (Nếu Android hỏi xác nhận, hãy bấm Kết nối / Connect)`;
+      fb.textContent = `⏳ Đang kết nối tự động tới "${ssid}" trong app... (Nếu có thông báo trên thanh trạng thái, hãy bấm Cho phép)`;
       fb.className = "sub-text";
+      fb.style.color = "#fbbf24";
       fb.classList.remove("hidden");
     }
 
     const native = getRobotNative();
-    if (!native || typeof native.connectWifi !== "function") return;
+    if (!native || typeof native.connectWifi !== "function") {
+      state.isConfiguringWifi = false;
+      return;
+    }
 
     try {
       const res = await native.connectWifi({ ssid, password });
-      if (res && res.connected) {
+      if (res && res.connected && isLocalWifiIp(res.ip)) {
+        state.isConfiguringWifi = false;
         if (fb) {
-          fb.textContent = `✅ Đã kết nối Wi-Fi "${res.ssid}" (IP: ${res.ip || "Sẵn sàng"})`;
+          fb.textContent = `✅ Đã kết nối thành công Wi-Fi "${ssid}" (IP: ${res.ip})`;
           fb.style.color = "#4ade80";
         }
         refreshDeviceTelemetry();
-        setTimeout(() => scanWifiList(), 1200);
+        scanWifiList();
+        return;
       }
+
+      // Kiểm tra liên tục mỗi 1.2 giây cho tới khi Android hoàn tất kết nối ngầm
+      let checks = 0;
+      wifiVerifyTimer = setInterval(async () => {
+        checks += 1;
+        const ok = await verifyWifiConnectionOnce(ssid);
+        if (ok || checks >= 12) {
+          stopWifiVerifyPolling();
+          state.isConfiguringWifi = false;
+          if (!ok && fb) {
+            fb.textContent = `⚠️ Android đang chờ xác nhận hoặc sai mật khẩu. Hãy kiểm tra thông báo trên cùng hoặc bấm "Bảng Wi-Fi Android" (mật khẩu đã chép sẵn).`;
+            fb.className = "error-text";
+            fb.style.color = "";
+          }
+        }
+      }, 1200);
     } catch (err) {
+      state.isConfiguringWifi = false;
       if (fb) {
-        fb.textContent = `❌ ${err?.message || "Kết nối Wi-Fi thất bại, kiểm tra lại mật khẩu."}`;
+        fb.textContent = `❌ ${err?.message || "Kết nối Wi-Fi thất bại."}`;
         fb.className = "error-text";
+        fb.style.color = "";
       }
     }
   }
 
   function openWifiModal() {
+    const fb = document.getElementById("wifi-connect-feedback");
+    if (fb) fb.classList.add("hidden");
     document.getElementById("wifi-modal").classList.remove("hidden");
     refreshDeviceTelemetry();
     scanWifiList();
@@ -1192,7 +1360,6 @@
     const native = getRobotNative();
     if (native && typeof native.scanBluetoothDevices === "function") {
       try {
-        await native.requestAllPermissions().catch(() => {});
         const res = await native.scanBluetoothDevices();
         if (res && Array.isArray(res.devices)) {
           res.devices.forEach(d => {
@@ -1527,7 +1694,6 @@
     const statusEl = document.getElementById("cam-signaling-status");
     if (statusEl) statusEl.textContent = "🟢 Sẵn sàng kết nối từ xa (24/7)";
 
-    // Khôi phục lại chế độ nghe lệnh giọng nói cho bé sau khi phụ huynh tắt Camera
     setTimeout(() => {
       if (!state.isSpeaking && !state.isRecordingLesson) {
         ensureAlwaysListening();
@@ -1541,7 +1707,6 @@
     appliedViewerIceCount = 0;
 
     try {
-      // 1. Ngắt SpeechRecognizer, TTS và camera preview (nếu đang mở) để nhả phần cứng cho WebRTC
       stopAllSpeechAndMic();
       if (state.camPreviewStream) {
         try { state.camPreviewStream.getTracks().forEach(t => t.stop()); } catch (_) {}
@@ -1550,22 +1715,14 @@
         if (previewEl) previewEl.classList.add("hidden");
       }
 
-      const native = getRobotNative();
-      if (native && typeof native.requestCameraPermission === "function") {
-        await native.requestCameraPermission().catch(() => {});
-      }
-
-      // Chờ Android giải phóng hoàn toàn tài nguyên Micro từ SpeechRecognizer
       await new Promise(resolve => setTimeout(resolve, 350));
 
-      // 2. Mở Camera trước + Micro; nếu Micro đang bận thì tự hạ cấp sang chỉ mở Camera trước
       try {
         robotCamStream = await navigator.mediaDevices.getUserMedia({
           video: { facingMode: "user", width: { ideal: 640 }, height: { ideal: 480 } },
           audio: true
         });
       } catch (mediaErr) {
-        console.warn("Mic bận, chuyển sang truyền Camera trước không tiếng:", mediaErr);
         robotCamStream = await navigator.mediaDevices.getUserMedia({
           video: { facingMode: "user", width: { ideal: 640 }, height: { ideal: 480 } },
           audio: false
@@ -1593,8 +1750,7 @@
 
       const statusEl = document.getElementById("cam-signaling-status");
       if (statusEl) statusEl.textContent = "🔴 Đang truyền hình trực tiếp tới người thân...";
-    } catch (err) {
-      console.error("Lỗi mở camera Robot:", err);
+    } catch (_) {
       stopRobotP2PCamera();
     } finally {
       isAnsweringCam = false;
@@ -1688,9 +1844,12 @@
         document.getElementById("hdr-battery").textContent = `${icon} ${st.battery}%`;
         document.getElementById("hdr-temp").textContent = `${Number(st.temperature).toFixed(1)}°C`;
 
-        const wifiText = st.localIp && st.localIp !== "0.0.0.0"
-          ? `${st.wifiSsid} (${st.localIp})`
-          : st.wifiSsid;
+        const curSsid = cleanSsidName(st.wifiSsid);
+        const ipStr = (st.localIp || "").trim();
+        const wifiText = isLocalWifiIp(ipStr) && curSsid && !curSsid.toLowerCase().includes("unknown")
+          ? `${curSsid} (${ipStr})`
+          : (curSsid && !curSsid.toLowerCase().includes("unknown") ? curSsid : "Chưa kết nối Wi-Fi");
+
         const wifiInfo = document.getElementById("set-wifi-info");
         if (wifiInfo) wifiInfo.textContent = wifiText;
         const modalCur = document.getElementById("wifi-modal-current");
@@ -1716,7 +1875,6 @@
 
   // ==================== EVENT BINDINGS ====================
   function bindEvents() {
-    // Header navigation
     document.querySelectorAll(".nav-btn[data-tab]").forEach(btn => {
       btn.addEventListener("click", () => switchTab(btn.dataset.tab));
     });
@@ -1730,7 +1888,6 @@
       }
     });
 
-    // Header pills
     document.getElementById("hdr-ble-pill").addEventListener("click", () => {
       document.getElementById("ble-modal").classList.remove("hidden");
       startBluetoothScan();
@@ -1758,7 +1915,6 @@
       document.getElementById("member-modal").classList.add("hidden");
     });
 
-    // Robot face & Karaoke controls
     document.getElementById("robot-head").addEventListener("click", () => wakeRobot(true));
     document.getElementById("btn-toggle-karaoke").addEventListener("click", () => toggleKaraokePanel(!state.karaokeOpen));
     document.getElementById("btn-close-karaoke").addEventListener("click", () => toggleKaraokePanel(false));
@@ -1783,7 +1939,6 @@
     document.getElementById("btn-k-replay").addEventListener("click", playCurrentSample);
     document.getElementById("btn-k-record").addEventListener("click", startLessonPronunciationCheck);
 
-    // Topics tab
     document.getElementById("btn-sync-topics").addEventListener("click", () => loadTopicsList(true));
     document.getElementById("topic-search-input").addEventListener("input", renderTopicsGrid);
     document.getElementById("btn-review-hard-words").addEventListener("click", () => {
@@ -1792,7 +1947,6 @@
       }
     });
 
-    // Settings unlock PIN modal
     document.getElementById("btn-pin-cancel").addEventListener("click", () => {
       document.getElementById("pin-modal").classList.add("hidden");
     });
@@ -1820,7 +1974,6 @@
       }
     });
 
-    // Settings controls
     document.getElementById("btn-lock-settings").addEventListener("click", () => {
       state.settingsUnlocked = false;
       switchTab("robot");
@@ -1856,7 +2009,6 @@
       saveLocalState();
     });
 
-    // Parent PIN change via Virtual Keyboard
     document.getElementById("set-new-parent-pin").addEventListener("click", () => {
       openVirtualKeyboard("set-new-parent-pin", "numpad", "Nhập mã PIN Phụ huynh mới");
     });
@@ -1895,6 +2047,8 @@
     // Wi-Fi Modal events
     document.getElementById("btn-open-wifi").addEventListener("click", openWifiModal);
     document.getElementById("btn-wifi-close").addEventListener("click", () => {
+      stopWifiVerifyPolling();
+      state.isConfiguringWifi = false;
       document.getElementById("wifi-modal").classList.add("hidden");
     });
     document.getElementById("btn-wifi-rescan").addEventListener("click", scanWifiList);
@@ -1910,7 +2064,15 @@
     });
     document.getElementById("btn-wifi-connect").addEventListener("click", connectSelectedWifi);
     document.getElementById("btn-wifi-android-panel").addEventListener("click", () => {
+      state.isConfiguringWifi = true;
       if (getRobotNative()) getRobotNative().openWifiSettings().catch(() => {});
+    });
+
+    document.addEventListener("visibilitychange", () => {
+      if (!document.hidden && state.isConfiguringWifi) {
+        const target = (document.getElementById("wifi-ssid-input")?.value || "").trim();
+        verifyWifiConnectionOnce(target);
+      }
     });
 
     // Bluetooth Modal events
@@ -1933,7 +2095,6 @@
     document.getElementById("btn-test-arm-light").addEventListener("click", () => setArmLight(!state.armLightOn));
     document.getElementById("btn-test-head-turn").addEventListener("click", () => sendBleCommand("M:HEAD_SWEEP:2"));
 
-    // Camera QR Copy & Preview
     document.getElementById("btn-copy-cam-url").addEventListener("click", async () => {
       const val = document.getElementById("camera-live-url-input").value;
       try {
@@ -1951,14 +2112,12 @@
         return;
       }
       try {
-        if (getRobotNative()) await getRobotNative().requestCameraPermission().catch(() => {});
         state.camPreviewStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "user" }, audio: false });
         videoEl.srcObject = state.camPreviewStream;
         videoEl.classList.remove("hidden");
       } catch (_) {}
     });
 
-    // Kiosk & Developer Zone (Official Password = 202799 ONLY)
     document.getElementById("dev-exit-code-input").addEventListener("click", () => {
       openVirtualKeyboard("dev-exit-code-input", "numpad", "Nhập mã nhà phát triển");
     });
@@ -1988,7 +2147,6 @@
       }
     });
 
-    // Shared Virtual Keyboard Modal Controls
     document.getElementById("vkb-close").addEventListener("click", closeVirtualKeyboard);
     document.getElementById("vkb-switch-layout").addEventListener("click", () => {
       vkbState.layout = vkbState.layout === "numpad" ? "qwerty" : "numpad";
@@ -2035,16 +2193,15 @@
       });
       native.addListener("speechError", () => {
         state.isListening = false;
-        if (state.isRecordingLesson) {
+        // Không hủy trạng thái chấm điểm nếu lỗi phát sinh ngay lúc vừa bấm nút ghi âm
+        if (state.isRecordingLesson && Date.now() - state.recordStartedAt > 1200) {
           state.isRecordingLesson = false;
           setRobotMood("happy");
         }
-        setTimeout(ensureAlwaysListening, 900);
+        setTimeout(ensureAlwaysListening, 700);
       });
       native.addListener("ttsEnd", () => {
-        state.isSpeaking = false;
-        setRobotMood("happy");
-        setTimeout(ensureAlwaysListening, 300);
+        onSamplePlaybackFinished();
       });
       native.addListener("btDeviceFound", dev => {
         const addr = dev?.address || dev?.deviceId;
@@ -2098,7 +2255,6 @@
       await native.setVolume({ level: state.config.volume }).catch(() => {});
     }
 
-    // Auto-reconnect saved Bluetooth device if configured
     if (state.config.bleAutoReconnect && state.config.savedBleAddress && native?.connectBluetoothDevice) {
       native.connectBluetoothDevice({
         address: state.config.savedBleAddress,
@@ -2114,7 +2270,6 @@
       }).catch(() => {});
     }
 
-    // Sync all topics from server immediately on startup
     loadTopicsList(true);
     startGlobalCameraSignalingPoller();
     ensureAlwaysListening();

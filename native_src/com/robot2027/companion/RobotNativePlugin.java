@@ -86,6 +86,7 @@ import java.util.concurrent.Executors;
 public class RobotNativePlugin extends Plugin {
 
     public static volatile boolean sKioskLocked = false;
+    public static volatile boolean sTempUnpinnedForWifi = false;
 
     private static final UUID ESP_SERVICE_UUID = UUID.fromString("4fafc201-1fb5-459e-8fcc-c5c9c331914b");
     private static final UUID ESP_CHAR_TX_UUID = UUID.fromString("beb5483e-36e1-4688-b7f5-ea07361b26a8");
@@ -135,8 +136,13 @@ public class RobotNativePlugin extends Plugin {
     }
 
     public static void reapplyKioskIfLocked(Activity activity) {
-        if (activity != null && sKioskLocked) {
-            applyKioskFlags(activity, true);
+        if (activity == null) return;
+        if (sTempUnpinnedForWifi) return;
+        applyKioskFlags(activity, sKioskLocked);
+        if (sKioskLocked) {
+            try {
+                activity.startLockTask();
+            } catch (Exception ignored) {}
         }
     }
 
@@ -778,7 +784,7 @@ public class RobotNativePlugin extends Plugin {
         call.resolve();
     }
 
-    // ==================== 2. WI-FI SCANNER & KIOSK-SAFE CONNECT ====================
+    // ==================== 2. WI-FI SCANNER & 100% IN-APP SUGGESTION CONNECT ====================
 
     @SuppressLint("MissingPermission")
     @PluginMethod
@@ -870,9 +876,20 @@ public class RobotNativePlugin extends Plugin {
             return;
         }
 
-        // Android 10+ (API 29+): Lưu WifiNetworkSuggestion & tạm mở Kiosk để chọn Wi-Fi không bị chặn bỏ ghim
+        if (!wifiManager.isWifiEnabled()) {
+            try { wifiManager.setWifiEnabled(true); } catch (Exception ignored) {}
+        }
+
+        // Android 10+ (API 29+): Kết nối ngầm 100% trong app qua WifiNetworkSuggestion (không mở bảng hệ thống)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             try {
+                if (!password.isEmpty()) {
+                    ClipboardManager clipboard = (ClipboardManager) ctx.getSystemService(Context.CLIPBOARD_SERVICE);
+                    if (clipboard != null) {
+                        clipboard.setPrimaryClip(ClipData.newPlainText("wifi_pass", password));
+                    }
+                }
+
                 WifiNetworkSuggestion.Builder sugBuilder = new WifiNetworkSuggestion.Builder()
                     .setSsid(ssid);
                 if (!password.isEmpty()) {
@@ -880,47 +897,25 @@ public class RobotNativePlugin extends Plugin {
                 }
                 List<WifiNetworkSuggestion> sugList = Collections.singletonList(sugBuilder.build());
                 wifiManager.removeNetworkSuggestions(sugList);
-                wifiManager.addNetworkSuggestions(sugList);
-            } catch (Exception ignored) {}
+                int status = wifiManager.addNetworkSuggestions(sugList);
 
-            mainHandler.post(() -> {
-                try {
-                    if (!password.isEmpty()) {
-                        ClipboardManager clipboard = (ClipboardManager) ctx.getSystemService(Context.CLIPBOARD_SERVICE);
-                        if (clipboard != null) {
-                            clipboard.setPrimaryClip(ClipData.newPlainText("wifi_pass", password));
-                        }
-                        Toast.makeText(ctx, "Đã chép mật khẩu Wi-Fi! Chọn \"" + ssid + "\" và bấm Dán.", Toast.LENGTH_LONG).show();
-                    }
+                // Kích hoạt quét ngay để hệ thống tự bắt mạng vừa đề xuất
+                try { wifiManager.startScan(); } catch (Exception ignored) {}
 
-                    // Tạm nhả LockTask (giữ nguyên cờ sKioskLocked=true) để mở bảng Wi-Fi không bị báo lỗi bỏ ghim
-                    Activity act = getActivity();
-                    if (act != null) {
-                        try { act.stopLockTask(); } catch (Exception ignored) {}
-                    }
-
-                    Intent panelIntent = new Intent(Settings.Panel.ACTION_WIFI);
-                    panelIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
-                    ctx.startActivity(panelIntent);
-
-                    JSObject res = new JSObject();
-                    res.put("connected", true);
-                    res.put("ssid", ssid);
-                    res.put("openedPanel", true);
-                    call.resolve(res);
-                } catch (Exception e) {
-                    call.reject("Lỗi mở bảng Wi-Fi: " + e.getMessage());
-                }
-            });
+                JSObject res = new JSObject();
+                res.put("suggested", true);
+                res.put("status", status);
+                res.put("ssid", ssid);
+                call.resolve(res);
+            } catch (Exception e) {
+                call.reject("Lỗi đề xuất Wi-Fi: " + e.getMessage());
+            }
             return;
         }
 
-        // Android 9 trở xuống
+        // Android 9 trở xuống: Kết nối trực tiếp 100% trong app
         ioExecutor.execute(() -> {
             try {
-                if (!wifiManager.isWifiEnabled()) {
-                    wifiManager.setWifiEnabled(true);
-                }
                 WifiConfiguration conf = new WifiConfiguration();
                 conf.SSID = "\"" + ssid + "\"";
                 if (password.isEmpty()) {
@@ -947,6 +942,23 @@ public class RobotNativePlugin extends Plugin {
             } catch (Exception e) {
                 call.reject("Lỗi kết nối Wi-Fi: " + e.getMessage());
             }
+        });
+    }
+
+    @PluginMethod
+    public void openWifiSettings(PluginCall call) {
+        mainHandler.post(() -> {
+            sTempUnpinnedForWifi = true;
+            Activity act = getActivity();
+            if (act != null) {
+                try { act.stopLockTask(); } catch (Exception ignored) {}
+            }
+            Intent intent = Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q
+                ? new Intent(Settings.Panel.ACTION_WIFI)
+                : new Intent(Settings.ACTION_WIFI_SETTINGS);
+            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+            getContext().startActivity(intent);
+            call.resolve();
         });
     }
 
@@ -992,7 +1004,7 @@ public class RobotNativePlugin extends Plugin {
         });
     }
 
-    // ==================== 4. BRIGHTNESS, VOLUME, TTS, FAST STT, KIOSK ====================
+    // ==================== 4. BRIGHTNESS, VOLUME, TTS, FAST & ACCURATE STT, KIOSK ====================
 
     @PluginMethod
     public void setBrightness(PluginCall call) {
@@ -1078,7 +1090,11 @@ public class RobotNativePlugin extends Plugin {
             @Override public void onError(int error) {
                 isListening = false;
                 muteBeep(false);
-                if (error == SpeechRecognizer.ERROR_CLIENT || error == SpeechRecognizer.ERROR_RECOGNIZER_BUSY) {
+                // Bỏ qua lỗi ERROR_CLIENT phát sinh khi hủy phiên nghe cũ để chuyển sang chấm điểm tiếng Anh
+                if (error == SpeechRecognizer.ERROR_CLIENT) {
+                    return;
+                }
+                if (error == SpeechRecognizer.ERROR_RECOGNIZER_BUSY) {
                     try { speechRecognizer.destroy(); } catch (Exception ignored) {}
                     speechRecognizer = null;
                 }
@@ -1109,6 +1125,8 @@ public class RobotNativePlugin extends Plugin {
     @PluginMethod
     public void startListening(PluginCall call) {
         String lang = call.getString("lang", "vi-VN");
+        boolean isEnglishLesson = lang.toLowerCase(Locale.ROOT).startsWith("en");
+
         mainHandler.post(() -> {
             try {
                 muteBeep(true);
@@ -1121,8 +1139,10 @@ public class RobotNativePlugin extends Plugin {
                 intent.putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM);
                 intent.putExtra(RecognizerIntent.EXTRA_LANGUAGE, lang);
                 intent.putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true);
-                intent.putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS, 650L);
-                intent.putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS, 550L);
+                // Tiếng Anh học bài chờ 1.5s để bé đọc trọn câu; lệnh tiếng Việt ngắt nhanh 0.65s
+                long silenceMs = isEnglishLesson ? 1500L : 650L;
+                intent.putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS, silenceMs);
+                intent.putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS, silenceMs);
                 intent.putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 1);
 
                 isListening = true;
@@ -1167,25 +1187,12 @@ public class RobotNativePlugin extends Plugin {
     }
 
     @PluginMethod
-    public void openWifiSettings(PluginCall call) {
-        mainHandler.post(() -> {
-            Activity act = getActivity();
-            if (act != null) {
-                try { act.stopLockTask(); } catch (Exception ignored) {}
-            }
-            Intent intent = Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q
-                ? new Intent(Settings.Panel.ACTION_WIFI)
-                : new Intent(Settings.ACTION_WIFI_SETTINGS);
-            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
-            getContext().startActivity(intent);
-            call.resolve();
-        });
-    }
-
-    @PluginMethod
     public void setKioskMode(PluginCall call) {
         boolean enabled = call.getBoolean("enabled", true);
         sKioskLocked = enabled;
+        if (enabled) {
+            sTempUnpinnedForWifi = false;
+        }
         mainHandler.post(() -> {
             applyKioskFlags(getActivity(), enabled);
             JSObject ret = new JSObject();
