@@ -19,6 +19,8 @@ import android.bluetooth.le.ScanCallback;
 import android.bluetooth.le.ScanResult;
 import android.bluetooth.le.ScanSettings;
 import android.content.BroadcastReceiver;
+import android.content.ClipData;
+import android.content.ClipboardManager;
 import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
@@ -28,12 +30,9 @@ import android.net.ConnectivityManager;
 import android.net.LinkAddress;
 import android.net.LinkProperties;
 import android.net.Network;
-import android.net.NetworkCapabilities;
-import android.net.NetworkRequest;
 import android.net.wifi.WifiConfiguration;
 import android.net.wifi.WifiInfo;
 import android.net.wifi.WifiManager;
-import android.net.wifi.WifiNetworkSpecifier;
 import android.net.wifi.WifiNetworkSuggestion;
 import android.os.BatteryManager;
 import android.os.Build;
@@ -49,6 +48,7 @@ import android.speech.tts.UtteranceProgressListener;
 import android.text.format.Formatter;
 import android.view.View;
 import android.view.WindowManager;
+import android.widget.Toast;
 
 import androidx.core.app.ActivityCompat;
 import androidx.core.content.ContextCompat;
@@ -72,7 +72,6 @@ import java.net.URL;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Collections;
-import java.util.Comparator;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
@@ -117,9 +116,6 @@ public class RobotNativePlugin extends Plugin {
     private String connectedBtAddress = "";
     private String connectedBtName = "";
     private String connectedBtMode = "";
-
-    // Wi-Fi NetworkCallback reference
-    private ConnectivityManager.NetworkCallback activeWifiCallback;
 
     @Override
     public void load() {
@@ -210,6 +206,7 @@ public class RobotNativePlugin extends Plugin {
             return;
         }
         ArrayList<String> perms = new ArrayList<>();
+        perms.add(Manifest.permission.CAMERA);
         perms.add(Manifest.permission.RECORD_AUDIO);
         perms.add(Manifest.permission.ACCESS_FINE_LOCATION);
         perms.add(Manifest.permission.ACCESS_COARSE_LOCATION);
@@ -230,7 +227,10 @@ public class RobotNativePlugin extends Plugin {
     public void requestCameraPermission(PluginCall call) {
         Activity activity = getActivity();
         if (activity != null) {
-            ActivityCompat.requestPermissions(activity, new String[]{Manifest.permission.CAMERA}, 2028);
+            ActivityCompat.requestPermissions(activity, new String[]{
+                Manifest.permission.CAMERA,
+                Manifest.permission.RECORD_AUDIO
+            }, 2028);
         }
         call.resolve();
     }
@@ -314,11 +314,7 @@ public class RobotNativePlugin extends Plugin {
                         wifiSsid = rawSsid.replace("\"", "");
                     }
                     if (wifiSsid.isEmpty() || wifiSsid.contains("unknown ssid")) {
-                        boolean hasLoc = ContextCompat.checkSelfPermission(ctx, Manifest.permission.ACCESS_FINE_LOCATION)
-                            == PackageManager.PERMISSION_GRANTED;
-                        wifiSsid = !localIp.equals("0.0.0.0")
-                            ? (hasLoc ? "Đã kết nối Wi-Fi" : "Đã kết nối Wi-Fi")
-                            : "Chưa kết nối Wi-Fi";
+                        wifiSsid = !localIp.equals("0.0.0.0") ? "Đã kết nối Wi-Fi" : "Chưa kết nối Wi-Fi";
                     }
                 }
             }
@@ -464,7 +460,6 @@ public class RobotNativePlugin extends Plugin {
         discoveredBtDevices.clear();
         isBtScanning = true;
 
-        // 1. Add all Paired/Bonded devices immediately (e.g. K12 speaker, paired phones, ESP32)
         try {
             Set<BluetoothDevice> bonded = bluetoothAdapter.getBondedDevices();
             if (bonded != null) {
@@ -474,7 +469,6 @@ public class RobotNativePlugin extends Plugin {
             }
         } catch (Exception ignored) {}
 
-        // 2. Start Classic Bluetooth Discovery (finds nearby phones, speakers, TVs, HC-05)
         try {
             btDiscoveryReceiver = new BroadcastReceiver() {
                 @Override
@@ -484,8 +478,6 @@ public class RobotNativePlugin extends Plugin {
                         BluetoothDevice dev = intent.getParcelableExtra(BluetoothDevice.EXTRA_DEVICE);
                         short rssi = intent.getShortExtra(BluetoothDevice.EXTRA_RSSI, (short) -65);
                         upsertBtDevice(dev, rssi, "Classic");
-                    } else if (BluetoothAdapter.ACTION_DISCOVERY_FINISHED.equals(action)) {
-                        // Keep BLE running until timeout
                     }
                 }
             };
@@ -496,7 +488,6 @@ public class RobotNativePlugin extends Plugin {
             bluetoothAdapter.startDiscovery();
         } catch (Exception ignored) {}
 
-        // 3. Start BLE Scan simultaneously (finds ESP32 BLE & low-energy peripherals)
         try {
             bleScanner = bluetoothAdapter.getBluetoothLeScanner();
             if (bleScanner != null) {
@@ -524,7 +515,6 @@ public class RobotNativePlugin extends Plugin {
             }
         } catch (Exception ignored) {}
 
-        // Stop scan automatically after 10 seconds and emit final summary
         mainHandler.postDelayed(() -> {
             if (!isBtScanning) return;
             stopBtScanInternal();
@@ -576,7 +566,6 @@ public class RobotNativePlugin extends Plugin {
             return;
         }
 
-        // Optional PIN auto-pairing handler
         if (!pin.isEmpty()) {
             try {
                 if (btPairingReceiver != null) {
@@ -603,7 +592,6 @@ public class RobotNativePlugin extends Plugin {
         }
 
         ioExecutor.execute(() -> {
-            // Try Classic RFCOMM SPP first if device is Classic/Bonded, or fallback to BLE GATT
             boolean rfcommConnected = false;
             try {
                 if (device.getBondState() == BluetoothDevice.BOND_NONE) {
@@ -619,7 +607,6 @@ public class RobotNativePlugin extends Plugin {
                 connectedBtMode = "SPP";
                 rfcommConnected = true;
 
-                // Listen for incoming serial data from Classic ESP32/HC-05
                 InputStream in = sock.getInputStream();
                 ioExecutor.execute(() -> {
                     byte[] buf = new byte[512];
@@ -651,7 +638,6 @@ public class RobotNativePlugin extends Plugin {
                 return;
             } catch (Exception ignored) {}
 
-            // Try BLE GATT connection (for ESP32 BLE)
             if (!rfcommConnected) {
                 mainHandler.post(() -> {
                     try {
@@ -713,7 +699,6 @@ public class RobotNativePlugin extends Plugin {
                             }
                         }, BluetoothDevice.TRANSPORT_LE);
 
-                        // Mark paired/connected for audio/phone or BLE device
                         connectedBtAddress = address;
                         connectedBtName = name;
                         connectedBtMode = "BLE/Paired";
@@ -724,7 +709,6 @@ public class RobotNativePlugin extends Plugin {
                         res.put("name", name);
                         call.resolve(res);
                     } catch (Exception e) {
-                        // Even if GATT fails on a pure audio speaker/phone, if bonded, report paired!
                         if (device.getBondState() == BluetoothDevice.BOND_BONDED || device.getBondState() == BluetoothDevice.BOND_BONDING) {
                             connectedBtAddress = address;
                             connectedBtName = name;
@@ -794,7 +778,7 @@ public class RobotNativePlugin extends Plugin {
         call.resolve();
     }
 
-    // ==================== 2. WI-FI SCANNER & DIRECT CONNECT ====================
+    // ==================== 2. WI-FI SCANNER & KIOSK-SAFE CONNECT ====================
 
     @SuppressLint("MissingPermission")
     @PluginMethod
@@ -829,7 +813,6 @@ public class RobotNativePlugin extends Plugin {
             if (raw != null) results.addAll(raw);
         } catch (Exception ignored) {}
 
-        // Deduplicate by SSID keeping highest signal level
         Map<String, android.net.wifi.ScanResult> bestBySsid = new HashMap<>();
         for (android.net.wifi.ScanResult sr : results) {
             String ssid = (sr.SSID != null) ? sr.SSID.trim() : "";
@@ -887,10 +870,9 @@ public class RobotNativePlugin extends Plugin {
             return;
         }
 
-        // Android 10+ (API 29+): WifiNetworkSpecifier + WifiNetworkSuggestion
+        // Android 10+ (API 29+): Lưu WifiNetworkSuggestion & tạm mở Kiosk để chọn Wi-Fi không bị chặn bỏ ghim
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             try {
-                // Also add suggestion so Android remembers network
                 WifiNetworkSuggestion.Builder sugBuilder = new WifiNetworkSuggestion.Builder()
                     .setSsid(ssid);
                 if (!password.isEmpty()) {
@@ -901,63 +883,39 @@ public class RobotNativePlugin extends Plugin {
                 wifiManager.addNetworkSuggestions(sugList);
             } catch (Exception ignored) {}
 
-            try {
-                WifiNetworkSpecifier.Builder specBuilder = new WifiNetworkSpecifier.Builder()
-                    .setSsid(ssid);
-                if (!password.isEmpty()) {
-                    specBuilder.setWpa2Passphrase(password);
-                }
-                NetworkRequest request = new NetworkRequest.Builder()
-                    .addTransportType(NetworkCapabilities.TRANSPORT_WIFI)
-                    .setNetworkSpecifier(specBuilder.build())
-                    .build();
-
-                ConnectivityManager cm = (ConnectivityManager) ctx.getSystemService(Context.CONNECTIVITY_SERVICE);
-                if (cm == null) {
-                    call.reject("Không truy cập được ConnectivityManager.");
-                    return;
-                }
-
-                if (activeWifiCallback != null) {
-                    try {
-                        cm.unregisterNetworkCallback(activeWifiCallback);
-                    } catch (Exception ignored) {}
-                }
-
-                final boolean[] settled = {false};
-                activeWifiCallback = new ConnectivityManager.NetworkCallback() {
-                    @Override
-                    public void onAvailable(Network network) {
-                        if (settled[0]) return;
-                        settled[0] = true;
-                        try {
-                            cm.bindProcessToNetwork(network);
-                        } catch (Exception ignored) {}
-                        String ip = resolveLocalIpv4(ctx, wifiManager);
-                        JSObject res = new JSObject();
-                        res.put("connected", true);
-                        res.put("ssid", ssid);
-                        res.put("ip", ip);
-                        call.resolve(res);
+            mainHandler.post(() -> {
+                try {
+                    if (!password.isEmpty()) {
+                        ClipboardManager clipboard = (ClipboardManager) ctx.getSystemService(Context.CLIPBOARD_SERVICE);
+                        if (clipboard != null) {
+                            clipboard.setPrimaryClip(ClipData.newPlainText("wifi_pass", password));
+                        }
+                        Toast.makeText(ctx, "Đã chép mật khẩu Wi-Fi! Chọn \"" + ssid + "\" và bấm Dán.", Toast.LENGTH_LONG).show();
                     }
 
-                    @Override
-                    public void onUnavailable() {
-                        if (settled[0]) return;
-                        settled[0] = true;
-                        call.reject("Không thể kết nối Wi-Fi \"" + ssid + "\" (Sai mật khẩu hoặc hủy kết nối).");
+                    // Tạm nhả LockTask (giữ nguyên cờ sKioskLocked=true) để mở bảng Wi-Fi không bị báo lỗi bỏ ghim
+                    Activity act = getActivity();
+                    if (act != null) {
+                        try { act.stopLockTask(); } catch (Exception ignored) {}
                     }
-                };
 
-                cm.requestNetwork(request, activeWifiCallback, 15000);
-                return;
-            } catch (Exception e) {
-                call.reject("Lỗi kết nối Wi-Fi: " + e.getMessage());
-                return;
-            }
+                    Intent panelIntent = new Intent(Settings.Panel.ACTION_WIFI);
+                    panelIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                    ctx.startActivity(panelIntent);
+
+                    JSObject res = new JSObject();
+                    res.put("connected", true);
+                    res.put("ssid", ssid);
+                    res.put("openedPanel", true);
+                    call.resolve(res);
+                } catch (Exception e) {
+                    call.reject("Lỗi mở bảng Wi-Fi: " + e.getMessage());
+                }
+            });
+            return;
         }
 
-        // Legacy Android 9 and below
+        // Android 9 trở xuống
         ioExecutor.execute(() -> {
             try {
                 if (!wifiManager.isWifiEnabled()) {
@@ -1010,7 +968,7 @@ public class RobotNativePlugin extends Plugin {
                 conn.setConnectTimeout(12000);
                 conn.setReadTimeout(20000);
                 conn.setRequestProperty("Accept", "application/json");
-                conn.setRequestProperty("User-Agent", "Robot2027Pro/1.4.9");
+                conn.setRequestProperty("User-Agent", "Robot2027Pro/1.5.0");
 
                 int code = conn.getResponseCode();
                 InputStream stream = (code >= 200 && code < 400) ? conn.getInputStream() : conn.getErrorStream();
@@ -1034,7 +992,7 @@ public class RobotNativePlugin extends Plugin {
         });
     }
 
-    // ==================== 4. BRIGHTNESS, VOLUME, TTS, STT, KIOSK ====================
+    // ==================== 4. BRIGHTNESS, VOLUME, TTS, FAST STT, KIOSK ====================
 
     @PluginMethod
     public void setBrightness(PluginCall call) {
@@ -1106,54 +1064,67 @@ public class RobotNativePlugin extends Plugin {
         call.resolve();
     }
 
+    private void ensureSpeechRecognizerInstance() {
+        if (speechRecognizer != null) return;
+        speechRecognizer = SpeechRecognizer.createSpeechRecognizer(getContext());
+        speechRecognizer.setRecognitionListener(new RecognitionListener() {
+            @Override public void onReadyForSpeech(Bundle params) {
+                mainHandler.postDelayed(() -> muteBeep(false), 250);
+            }
+            @Override public void onBeginningOfSpeech() {}
+            @Override public void onRmsChanged(float rmsdB) {}
+            @Override public void onBufferReceived(byte[] buffer) {}
+            @Override public void onEndOfSpeech() { isListening = false; }
+            @Override public void onError(int error) {
+                isListening = false;
+                muteBeep(false);
+                if (error == SpeechRecognizer.ERROR_CLIENT || error == SpeechRecognizer.ERROR_RECOGNIZER_BUSY) {
+                    try { speechRecognizer.destroy(); } catch (Exception ignored) {}
+                    speechRecognizer = null;
+                }
+                JSObject err = new JSObject();
+                err.put("code", error);
+                notifyListeners("speechError", err);
+            }
+            @Override public void onResults(Bundle results) {
+                isListening = false;
+                ArrayList<String> matches = results.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION);
+                String best = (matches != null && !matches.isEmpty()) ? matches.get(0) : "";
+                JSObject res = new JSObject();
+                res.put("text", best);
+                notifyListeners("speechResult", res);
+            }
+            @Override public void onPartialResults(Bundle partialResults) {
+                ArrayList<String> matches = partialResults.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION);
+                if (matches != null && !matches.isEmpty()) {
+                    JSObject res = new JSObject();
+                    res.put("text", matches.get(0));
+                    notifyListeners("speechPartial", res);
+                }
+            }
+            @Override public void onEvent(int eventType, Bundle params) {}
+        });
+    }
+
     @PluginMethod
     public void startListening(PluginCall call) {
         String lang = call.getString("lang", "vi-VN");
         mainHandler.post(() -> {
             try {
                 muteBeep(true);
-                if (speechRecognizer != null) {
-                    speechRecognizer.destroy();
-                }
-                speechRecognizer = SpeechRecognizer.createSpeechRecognizer(getContext());
-                speechRecognizer.setRecognitionListener(new RecognitionListener() {
-                    @Override public void onReadyForSpeech(Bundle params) {
-                        mainHandler.postDelayed(() -> muteBeep(false), 350);
-                    }
-                    @Override public void onBeginningOfSpeech() {}
-                    @Override public void onRmsChanged(float rmsdB) {}
-                    @Override public void onBufferReceived(byte[] buffer) {}
-                    @Override public void onEndOfSpeech() { isListening = false; }
-                    @Override public void onError(int error) {
-                        isListening = false;
-                        muteBeep(false);
-                        JSObject err = new JSObject();
-                        err.put("code", error);
-                        notifyListeners("speechError", err);
-                    }
-                    @Override public void onResults(Bundle results) {
-                        isListening = false;
-                        ArrayList<String> matches = results.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION);
-                        String best = (matches != null && !matches.isEmpty()) ? matches.get(0) : "";
-                        JSObject res = new JSObject();
-                        res.put("text", best);
-                        notifyListeners("speechResult", res);
-                    }
-                    @Override public void onPartialResults(Bundle partialResults) {
-                        ArrayList<String> matches = partialResults.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION);
-                        if (matches != null && !matches.isEmpty()) {
-                            JSObject res = new JSObject();
-                            res.put("text", matches.get(0));
-                            notifyListeners("speechPartial", res);
-                        }
-                    }
-                    @Override public void onEvent(int eventType, Bundle params) {}
-                });
+                ensureSpeechRecognizerInstance();
+                try {
+                    speechRecognizer.cancel();
+                } catch (Exception ignored) {}
 
                 Intent intent = new Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH);
                 intent.putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM);
                 intent.putExtra(RecognizerIntent.EXTRA_LANGUAGE, lang);
                 intent.putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true);
+                intent.putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS, 650L);
+                intent.putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS, 550L);
+                intent.putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 1);
+
                 isListening = true;
                 speechRecognizer.startListening(intent);
                 call.resolve();
@@ -1169,7 +1140,10 @@ public class RobotNativePlugin extends Plugin {
         mainHandler.post(() -> {
             isListening = false;
             if (speechRecognizer != null) {
-                speechRecognizer.stopListening();
+                try {
+                    speechRecognizer.stopListening();
+                    speechRecognizer.cancel();
+                } catch (Exception ignored) {}
             }
             muteBeep(false);
             call.resolve();
@@ -1195,6 +1169,10 @@ public class RobotNativePlugin extends Plugin {
     @PluginMethod
     public void openWifiSettings(PluginCall call) {
         mainHandler.post(() -> {
+            Activity act = getActivity();
+            if (act != null) {
+                try { act.stopLockTask(); } catch (Exception ignored) {}
+            }
             Intent intent = Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q
                 ? new Intent(Settings.Panel.ACTION_WIFI)
                 : new Intent(Settings.ACTION_WIFI_SETTINGS);

@@ -209,6 +209,20 @@
             <span>Chế độ Chỉ Học Tập (Khóa YouTube & Game)</span>
             <input id="set-study-only" type="checkbox" />
           </label>
+
+          <!-- [VÁ 1 - HTML] Khôi phục mức độ khó chấm phát âm -->
+          <div class="form-row">
+            <label for="set-pass-threshold">Độ khó chấm đọc:</label>
+            <select id="set-pass-threshold">
+              <option value="50">50% — Dễ (Bé mới làm quen)</option>
+              <option value="60">60% — Vừa phải</option>
+              <option value="70" selected>70% — Khá (Khuyên dùng)</option>
+              <option value="80">80% — Chuẩn</option>
+              <option value="90">90% — Khó</option>
+              <option value="100">100% — Tuyệt đối</option>
+            </select>
+          </div>
+
           <div class="form-row">
             <label style="white-space:nowrap;">Giờ nhắc đi ngủ:</label>
             <input id="set-bedtime" type="time" value="21:30" />

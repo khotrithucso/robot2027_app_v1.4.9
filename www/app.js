@@ -1,10 +1,11 @@
 /* ==========================================================================
-   ROBOT 2027 - V1.4 PRO (UPDATE 9)
+   ROBOT 2027 - V1.4 PRO (UPDATE 10)
    - Dual-Mode Bluetooth Scanner & Connector (BLE + Classic: ESP32, Speakers, Phones)
    - Wi-Fi Scanner List + Virtual Keyboard Password + Native Android Connect
    - Full Server Sync for All Topics & Lessons (api.php + Native HTTP fallback)
+   - Configurable Pronunciation Pass Threshold (50% - 100%)
+   - Instant Voice Command Execution via speechPartial + Safe WebRTC P2P Camera
    - Single Official Developer Password: 202799 (No placeholder hint)
-   - Remote QR P2P Camera 24/7 + 2s Star Sync + Bilingual Voice Assistant
    ========================================================================== */
 (function () {
   "use strict";
@@ -70,6 +71,7 @@
       brightness: 75,
       volume: 80,
       speechRate: 0.95,
+      passThreshold: 70,
       bleAutoReconnect: true,
       savedBleAddress: "",
       savedBleName: "",
@@ -167,8 +169,8 @@
       if (savedCfg && typeof savedCfg === "object") {
         Object.assign(state.config, savedCfg);
       }
-      // Enforce valid server base URL
       state.config.serverUrl = getServerBase();
+      state.config.passThreshold = Number(state.config.passThreshold) || 70;
 
       let devUid = localStorage.getItem("rb_v14_device_uid");
       if (!devUid) {
@@ -217,7 +219,6 @@
       localStorage.setItem(dataKey, payload);
       localStorage.setItem(hashKey, hash || "");
     } catch (_) {
-      // Evict older cached topic payloads if localStorage quota is full
       try {
         const keysToRemove = [];
         for (let i = 0; i < localStorage.length; i++) {
@@ -256,7 +257,6 @@
     updateHeaderMemberUI();
     renderMembersSettingsList();
 
-    // Sync points to server
     fetchServerJson("api_user.php", {
       action: "sync_profile",
       bot_id: m.uid,
@@ -436,9 +436,25 @@
     updateSleepBadge();
   }
 
+  function stopAllSpeechAndMic() {
+    state.isSpeaking = false;
+    state.isListening = false;
+    state.isRecordingLesson = false;
+    try { state.audioPlayer.pause(); } catch (_) {}
+    const native = getRobotNative();
+    if (native) {
+      native.stopSpeak().catch(() => {});
+      native.stopListening().catch(() => {});
+    }
+    if ("speechSynthesis" in window) {
+      try { window.speechSynthesis.cancel(); } catch (_) {}
+    }
+  }
+
   function speakFeedback(text, lang = "vi-VN") {
     setRobotBubble(text);
     state.isSpeaking = true;
+    state.isListening = false;
     setRobotMood("speaking");
 
     const native = getRobotNative();
@@ -556,7 +572,6 @@
       }
     } catch (_) {}
 
-    // If network failed but we already have cached topics, keep them!
     if (state.topics.length > 0) {
       renderTopicsGrid();
     } else if (summary) {
@@ -706,7 +721,7 @@
     });
 
     document.getElementById("k-sentence-vi").textContent = item.vi || "Bấm Dịch câu để xem nghĩa tiếng Việt";
-    document.getElementById("k-score-label").textContent = "Điểm phát âm: Sẵn sàng";
+    document.getElementById("k-score-label").textContent = `Điểm phát âm: Sẵn sàng (Đạt ≥ ${state.config.passThreshold || 70}%)`;
     document.getElementById("k-heard-words").textContent = "";
   }
 
@@ -737,12 +752,16 @@
 
   function startLessonPronunciationCheck() {
     state.isRecordingLesson = true;
+    state.isListening = true;
     state.listenSessionId += 1;
     setRobotMood("listening");
     document.getElementById("k-score-label").textContent = "🎙️ Đang nghe bé đọc tiếng Anh...";
     const native = getRobotNative();
     if (native) {
-      native.startListening({ lang: "en-US" }).catch(() => {});
+      native.startListening({ lang: "en-US" }).catch(() => {
+        state.isRecordingLesson = false;
+        state.isListening = false;
+      });
     }
   }
 
@@ -765,10 +784,13 @@
     });
 
     const score = cleanTarget.length > 0 ? Math.round((matched / cleanTarget.length) * 100) : 0;
-    document.getElementById("k-score-label").textContent = `Điểm: ${score}% (${matched}/${cleanTarget.length} từ)`;
+    const passThreshold = Number(state.config.passThreshold) || 70;
+    const isPassed = score >= passThreshold;
+
+    document.getElementById("k-score-label").textContent = `Điểm: ${score}% / Mức đạt ${passThreshold}% (${matched}/${cleanTarget.length} từ)`;
     document.getElementById("k-heard-words").textContent = `Nghe được: "${spokenText}"`;
 
-    if (score >= 80) {
+    if (isPassed) {
       addStarsToActiveMember(1, `Đọc chuẩn: ${item.en}`);
       sendBleCommand("M:HAPPY");
       speakFeedback(`Tuyệt vời! Bạn đạt ${score} điểm và nhận thêm 1 ngôi sao!`, "vi-VN");
@@ -779,13 +801,16 @@
         }
       }, 2800);
     } else {
-      speakFeedback(`Bạn đạt ${score} điểm. Cùng nghe mẫu lại rồi đọc nhé!`, "vi-VN");
+      speakFeedback(`Bạn đạt ${score} điểm (cần ${passThreshold} điểm). Cùng nghe mẫu lại rồi đọc nhé!`, "vi-VN");
     }
   }
 
-  // ==================== VOICE COMMAND ROUTER ====================
+  // ==================== VOICE COMMAND ROUTER (INSTANT PARTIAL + FINAL) ====================
+  let lastInstantCmdNorm = "";
+  let lastInstantCmdTime = 0;
+
   function ensureAlwaysListening() {
-    if (state.isSpeaking || state.isRecordingLesson) return;
+    if (state.isSpeaking || state.isRecordingLesson || robotPc || isAnsweringCam) return;
     const native = getRobotNative();
     if (native && !state.isListening) {
       state.isListening = true;
@@ -793,6 +818,43 @@
         state.isListening = false;
       });
     }
+  }
+
+  function canTriggerInstantVoiceCommand(norm) {
+    if (!norm || state.isRecordingLesson || state.isSpeaking) return false;
+    return (
+      norm === "hello" ||
+      norm === "lucky" ||
+      norm.includes("hello lucky") ||
+      norm.includes("mo youtube") ||
+      norm.includes("xem youtube") ||
+      norm.includes("choi game") ||
+      norm.includes("mo game") ||
+      norm.includes("tro choi") ||
+      norm.includes("huong dan") ||
+      norm.includes("so hoc tap") ||
+      norm.includes("ve robot") ||
+      norm.includes("on tu kho") ||
+      norm.includes("hoc ngau nhien") ||
+      norm.includes("mo den dau") ||
+      norm.includes("bat den dau") ||
+      norm.includes("tat den dau") ||
+      norm.includes("mo den tay") ||
+      norm.includes("bat den tay") ||
+      norm.includes("tat den tay") ||
+      norm.includes("xoay dau") ||
+      norm.includes("gat dau") ||
+      norm.includes("lac dau") ||
+      norm.includes("tang sang") ||
+      norm.includes("giam sang") ||
+      norm.includes("dich cau") ||
+      norm.includes("nghia la gi") ||
+      norm.includes("nghe mau") ||
+      norm.includes("doc mau") ||
+      norm.includes("cau tiep") ||
+      norm.includes("cau truoc") ||
+      norm.includes("dung hoc")
+    );
   }
 
   function handleVoiceTranscript(rawText) {
@@ -818,7 +880,7 @@
       switchTab("youtube");
       return;
     }
-    if (norm.includes("choi game") || norm.includes("tro choi")) {
+    if (norm.includes("choi game") || norm.includes("tro choi") || norm.includes("mo game")) {
       switchTab("game");
       return;
     }
@@ -826,7 +888,11 @@
       switchTab("guide");
       return;
     }
-    if (norm.includes("on tu kho")) {
+    if (norm.includes("ve robot") || norm.includes("man hinh chinh")) {
+      switchTab("robot");
+      return;
+    }
+    if (norm.includes("so hoc tap") || norm.includes("on tu kho")) {
       switchTab("topics");
       return;
     }
@@ -855,6 +921,30 @@
         switchTab("topics");
         speakFeedback("Mình đã mở Sổ học chủ đề rồi, bạn chọn chủ đề muốn học nhé!", "vi-VN");
       }
+      return;
+    }
+    if (norm.includes("nghe mau") || norm.includes("doc mau")) {
+      if (state.karaokeOpen) playCurrentSample();
+      return;
+    }
+    if (norm.includes("cau tiep") || norm.includes("cau sau")) {
+      if (state.karaokeOpen && state.sentenceIndex < state.sentences.length - 1) {
+        state.sentenceIndex += 1;
+        renderCurrentSentence();
+        playCurrentSample();
+      }
+      return;
+    }
+    if (norm.includes("cau truoc") || norm.includes("quay lai")) {
+      if (state.karaokeOpen && state.sentenceIndex > 0) {
+        state.sentenceIndex -= 1;
+        renderCurrentSentence();
+        playCurrentSample();
+      }
+      return;
+    }
+    if (norm.includes("dung hoc") || norm.includes("dong bang hoc")) {
+      toggleKaraokePanel(false);
       return;
     }
     if (norm.includes("dich cau") || norm.includes("nghia la gi")) {
@@ -1057,7 +1147,6 @@
       return;
     }
 
-    // Sort: ESP32/Robot first, then paired, then strongest RSSI
     devices.sort((a, b) => {
       const aEsp = /esp32|robot|lucky/i.test(a.name) ? 1 : 0;
       const bEsp = /esp32|robot|lucky/i.test(b.name) ? 1 : 0;
@@ -1119,7 +1208,6 @@
       }
     }
 
-    // Fallback: @capacitor-community/bluetooth-le
     const ble = getBleClient();
     if (ble) {
       try {
@@ -1187,7 +1275,6 @@
       }
     }
 
-    // Fallback BLE Client
     const ble = getBleClient();
     if (ble) {
       try {
@@ -1436,7 +1523,16 @@
     }
     isAnsweringCam = false;
     appliedViewerIceCount = 0;
-    ensureAlwaysListening();
+
+    const statusEl = document.getElementById("cam-signaling-status");
+    if (statusEl) statusEl.textContent = "🟢 Sẵn sàng kết nối từ xa (24/7)";
+
+    // Khôi phục lại chế độ nghe lệnh giọng nói cho bé sau khi phụ huynh tắt Camera
+    setTimeout(() => {
+      if (!state.isSpeaking && !state.isRecordingLesson) {
+        ensureAlwaysListening();
+      }
+    }, 450);
   }
 
   async function handleIncomingViewerCall(offerSdp) {
@@ -1445,15 +1541,37 @@
     appliedViewerIceCount = 0;
 
     try {
+      // 1. Ngắt SpeechRecognizer, TTS và camera preview (nếu đang mở) để nhả phần cứng cho WebRTC
+      stopAllSpeechAndMic();
+      if (state.camPreviewStream) {
+        try { state.camPreviewStream.getTracks().forEach(t => t.stop()); } catch (_) {}
+        state.camPreviewStream = null;
+        const previewEl = document.getElementById("cam-preview-video");
+        if (previewEl) previewEl.classList.add("hidden");
+      }
+
       const native = getRobotNative();
-      if (native) {
-        await native.stopListening().catch(() => {});
+      if (native && typeof native.requestCameraPermission === "function") {
         await native.requestCameraPermission().catch(() => {});
       }
-      robotCamStream = await navigator.mediaDevices.getUserMedia({
-        video: { facingMode: "user", width: { ideal: 640 }, height: { ideal: 480 } },
-        audio: true
-      });
+
+      // Chờ Android giải phóng hoàn toàn tài nguyên Micro từ SpeechRecognizer
+      await new Promise(resolve => setTimeout(resolve, 350));
+
+      // 2. Mở Camera trước + Micro; nếu Micro đang bận thì tự hạ cấp sang chỉ mở Camera trước
+      try {
+        robotCamStream = await navigator.mediaDevices.getUserMedia({
+          video: { facingMode: "user", width: { ideal: 640 }, height: { ideal: 480 } },
+          audio: true
+        });
+      } catch (mediaErr) {
+        console.warn("Mic bận, chuyển sang truyền Camera trước không tiếng:", mediaErr);
+        robotCamStream = await navigator.mediaDevices.getUserMedia({
+          video: { facingMode: "user", width: { ideal: 640 }, height: { ideal: 480 } },
+          audio: false
+        });
+      }
+
       robotPc = new RTCPeerConnection({ iceServers: ICE_SERVERS });
       robotCamStream.getTracks().forEach(t => robotPc.addTrack(t, robotCamStream));
 
@@ -1472,7 +1590,11 @@
       const answer = await robotPc.createAnswer();
       await robotPc.setLocalDescription(answer);
       await camApiPost("robot_answer", { sdp: { type: answer.type, sdp: answer.sdp } });
-    } catch (_) {
+
+      const statusEl = document.getElementById("cam-signaling-status");
+      if (statusEl) statusEl.textContent = "🔴 Đang truyền hình trực tiếp tới người thân...";
+    } catch (err) {
+      console.error("Lỗi mở camera Robot:", err);
       stopRobotP2PCamera();
     } finally {
       isAnsweringCam = false;
@@ -1514,6 +1636,10 @@
   // ==================== SETTINGS UI, KIOSK & TELEMETRY ====================
   function syncSettingsUI() {
     document.getElementById("set-study-only").checked = !!state.config.studyOnly;
+    const passSelect = document.getElementById("set-pass-threshold");
+    if (passSelect) {
+      passSelect.value = String(state.config.passThreshold || 70);
+    }
     document.getElementById("set-bedtime").value = state.config.bedtime || "21:30";
     document.getElementById("set-brightness").value = state.config.brightness;
     document.getElementById("val-brightness").textContent = `${state.config.brightness}%`;
@@ -1718,6 +1844,13 @@
       state.config.studyOnly = e.target.checked;
       saveLocalState();
     });
+    const passSelect = document.getElementById("set-pass-threshold");
+    if (passSelect) {
+      passSelect.addEventListener("change", e => {
+        state.config.passThreshold = parseInt(e.target.value, 10) || 70;
+        saveLocalState();
+      });
+    }
     document.getElementById("set-bedtime").addEventListener("change", e => {
       state.config.bedtime = e.target.value;
       saveLocalState();
@@ -1869,15 +2002,36 @@
     // Native Plugin Event Listeners
     const native = getRobotNative();
     if (native && typeof native.addListener === "function") {
+      native.addListener("speechPartial", data => {
+        const partial = (data?.text || "").trim();
+        if (!partial) return;
+        const heardEl = document.getElementById("user-heard-line");
+        if (heardEl) heardEl.textContent = `👂 Đang nghe: "${partial}"...`;
+
+        const norm = normalizeVietnamese(partial);
+        const now = Date.now();
+        if (canTriggerInstantVoiceCommand(norm)) {
+          if (norm === lastInstantCmdNorm && now - lastInstantCmdTime < 2200) return;
+          lastInstantCmdNorm = norm;
+          lastInstantCmdTime = now;
+          handleVoiceTranscript(partial);
+        }
+      });
       native.addListener("speechResult", data => {
         state.isListening = false;
-        handleVoiceTranscript(data?.text || "");
-        setTimeout(ensureAlwaysListening, 400);
-      });
-      native.addListener("speechPartial", data => {
-        if (data?.text) {
-          document.getElementById("user-heard-line").textContent = `👂 Nghe thoáng: "${data.text}"`;
+        const finalText = (data?.text || "").trim();
+        const norm = normalizeVietnamese(finalText);
+        const now = Date.now();
+
+        if (norm && norm === lastInstantCmdNorm && now - lastInstantCmdTime < 2500) {
+          setTimeout(ensureAlwaysListening, 350);
+          return;
         }
+
+        if (finalText) {
+          handleVoiceTranscript(finalText);
+        }
+        setTimeout(ensureAlwaysListening, 400);
       });
       native.addListener("speechError", () => {
         state.isListening = false;

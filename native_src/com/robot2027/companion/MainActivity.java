@@ -2,9 +2,11 @@ package com.robot2027.companion;
 
 import android.os.Bundle;
 import android.webkit.PermissionRequest;
+import android.webkit.WebResourceRequest;
 import android.webkit.WebView;
 import com.getcapacitor.BridgeActivity;
 import com.getcapacitor.BridgeWebChromeClient;
+import com.getcapacitor.BridgeWebViewClient;
 
 public class MainActivity extends BridgeActivity {
     @Override
@@ -22,15 +24,24 @@ public class MainActivity extends BridgeActivity {
                     runOnUiThread(() -> request.grant(request.getResources()));
                 }
             });
+
+            wv.setWebViewClient(new BridgeWebViewClient(this.bridge) {
+                @Override
+                public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) {
+                    String url = request.getUrl().toString();
+                    if (url.startsWith("intent://") || url.startsWith("market://")) {
+                        return true;
+                    }
+                    return super.shouldOverrideUrlLoading(view, request);
+                }
+            });
         }
     }
 
     @Override
-    public void onWindowFocusChanged(boolean hasFocus) {
-        super.onWindowFocusChanged(hasFocus);
-        if (hasFocus) {
-            RobotNativePlugin.reapplyKioskIfLocked(this);
-        }
+    public void onResume() {
+        super.onResume();
+        RobotNativePlugin.reapplyKioskIfLocked(this);
     }
 
     @Override
