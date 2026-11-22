@@ -313,15 +313,33 @@ public class RobotNativePlugin extends Plugin {
             WifiManager wifiManager = (WifiManager) ctx.getApplicationContext().getSystemService(Context.WIFI_SERVICE);
             if (wifiManager != null && wifiManager.isWifiEnabled()) {
                 localIp = resolveLocalIpv4(ctx, wifiManager);
-                WifiInfo info = wifiManager.getConnectionInfo();
-                if (info != null) {
-                    String rawSsid = info.getSSID();
-                    if (rawSsid != null) {
-                        wifiSsid = rawSsid.replace("\"", "");
+                String detectedSsid = "";
+
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                    ConnectivityManager cm = (ConnectivityManager) ctx.getSystemService(Context.CONNECTIVITY_SERVICE);
+                    if (cm != null) {
+                        Network net = cm.getActiveNetwork();
+                        android.net.NetworkCapabilities nc = cm.getNetworkCapabilities(net);
+                        if (nc != null && nc.getTransportInfo() instanceof WifiInfo) {
+                            WifiInfo capWifi = (WifiInfo) nc.getTransportInfo();
+                            if (capWifi.getSSID() != null) {
+                                detectedSsid = capWifi.getSSID().replace("\"", "");
+                            }
+                        }
                     }
-                    if (wifiSsid.isEmpty() || wifiSsid.contains("unknown ssid")) {
-                        wifiSsid = !localIp.equals("0.0.0.0") ? "Đã kết nối Wi-Fi" : "Chưa kết nối Wi-Fi";
+                }
+
+                if (detectedSsid.isEmpty() || detectedSsid.contains("unknown ssid")) {
+                    WifiInfo info = wifiManager.getConnectionInfo();
+                    if (info != null && info.getSSID() != null) {
+                        detectedSsid = info.getSSID().replace("\"", "");
                     }
+                }
+
+                if (!detectedSsid.isEmpty() && !detectedSsid.contains("unknown ssid")) {
+                    wifiSsid = detectedSsid;
+                } else {
+                    wifiSsid = !localIp.equals("0.0.0.0") ? "Đã kết nối Wi-Fi" : "Chưa kết nối Wi-Fi";
                 }
             }
         } catch (Exception e) {
@@ -358,6 +376,7 @@ public class RobotNativePlugin extends Plugin {
         ret.put("btAddress", connectedBtAddress);
         call.resolve(ret);
     }
+
 
     // ==================== 1. DUAL-MODE BLUETOOTH SCAN & CONNECT (BLE + CLASSIC) ====================
 
@@ -890,14 +909,16 @@ public class RobotNativePlugin extends Plugin {
                     }
                 }
 
-                WifiNetworkSuggestion.Builder sugBuilder = new WifiNetworkSuggestion.Builder()
+                                WifiNetworkSuggestion.Builder sugBuilder = new WifiNetworkSuggestion.Builder()
                     .setSsid(ssid);
                 if (!password.isEmpty()) {
                     sugBuilder.setWpa2Passphrase(password);
                 }
                 List<WifiNetworkSuggestion> sugList = Collections.singletonList(sugBuilder.build());
-                wifiManager.removeNetworkSuggestions(sugList);
+                // Xóa toàn bộ đề xuất mạng cũ để Android chuyển ngay sang mạng Wi-Fi mới
+                wifiManager.removeNetworkSuggestions(new ArrayList<>());
                 int status = wifiManager.addNetworkSuggestions(sugList);
+ 
 
                 // Kích hoạt quét ngay để hệ thống tự bắt mạng vừa đề xuất
                 try { wifiManager.startScan(); } catch (Exception ignored) {}
